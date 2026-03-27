@@ -7,6 +7,10 @@ Auto Job Hunter - 自动求职投递系统
 
 import asyncio
 import argparse
+import subprocess
+import sys
+import time
+import webbrowser
 from loguru import logger
 
 from backend.core.config import get_settings
@@ -74,6 +78,85 @@ async def run_web(host: str = "0.0.0.0", port: int = 8000):
         port=port,
         reload=True,
     )
+
+
+def run_gui(backend_port: int = 8000, frontend_port: int = 8501, no_browser: bool = False):
+    """一键启动GUI界面（后端+前端）"""
+    import os
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    print("=" * 50)
+    print("Auto Job Hunter - 启动中...")
+    print("=" * 50)
+
+    # 启动后端服务
+    print(f"\n[1/3] 启动后端服务 (端口 {backend_port})...")
+    backend_cmd = [
+        sys.executable, "-m", "uvicorn",
+        "backend.main:app",
+        "--host", "127.0.0.1",
+        "--port", str(backend_port),
+    ]
+    backend_process = subprocess.Popen(
+        backend_cmd,
+        cwd=project_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 启动前端服务
+    print(f"[2/3] 启动前端服务 (端口 {frontend_port})...")
+    frontend_cmd = [
+        sys.executable, "-m", "streamlit", "run",
+        "frontend/app.py",
+        "--server.port", str(frontend_port),
+        "--server.headless", "true",
+    ]
+    frontend_process = subprocess.Popen(
+        frontend_cmd,
+        cwd=project_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 等待服务启动
+    print("[3/3] 等待服务就绪...")
+    time.sleep(2)
+
+    # 打开浏览器
+    frontend_url = f"http://localhost:{frontend_port}"
+    if not no_browser:
+        print(f"正在打开浏览器: {frontend_url}")
+        webbrowser.open(frontend_url)
+
+    print("\n" + "=" * 50)
+    print("服务已启动!")
+    print(f"  前端界面: {frontend_url}")
+    print(f"  后端API:  http://localhost:{backend_port}")
+    print(f"  API文档:  http://localhost:{backend_port}/docs")
+    print("=" * 50)
+    print("\n按 Ctrl+C 停止服务...")
+
+    try:
+        # 等待进程结束
+        while True:
+            if backend_process.poll() is not None:
+                print("后端服务已停止")
+                break
+            if frontend_process.poll() is not None:
+                print("前端服务已停止")
+                break
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\n正在停止服务...")
+    finally:
+        # 确保两个进程都被终止
+        backend_process.terminate()
+        frontend_process.terminate()
+        backend_process.wait(timeout=5)
+        frontend_process.wait(timeout=5)
+        print("服务已停止")
 
 
 def main():
@@ -144,6 +227,26 @@ def main():
     # init 子命令
     init_parser = subparsers.add_parser("init", help="初始化系统")
 
+    # gui 子命令
+    gui_parser = subparsers.add_parser("gui", help="一键启动GUI界面")
+    gui_parser.add_argument(
+        "--backend-port",
+        type=int,
+        default=8000,
+        help="后端服务端口"
+    )
+    gui_parser.add_argument(
+        "--frontend-port",
+        type=int,
+        default=8501,
+        help="前端服务端口"
+    )
+    gui_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="不自动打开浏览器"
+    )
+
     args = parser.parse_args()
 
     # 设置日志
@@ -182,6 +285,14 @@ def main():
         print("  - LIEPIN_USERNAME/LIEPIN_PASSWORD: 猎聘账号")
         print("  - OPENAI_API_KEY: OpenAI API密钥(可选)")
         print("\n启动Web服务: python -m backend.cli web")
+        print("启动GUI界面: python -m backend.cli gui")
+
+    elif args.command == "gui":
+        run_gui(
+            backend_port=args.backend_port,
+            frontend_port=args.frontend_port,
+            no_browser=args.no_browser,
+        )
 
     else:
         parser.print_help()

@@ -5,9 +5,8 @@ Auto Job Hunter - Streamlit Web GUI
 """
 
 import streamlit as st
-import httpx
+import requests
 from datetime import datetime
-import asyncio
 
 # API Base URL
 API_BASE = "http://localhost:8000/api"
@@ -23,7 +22,7 @@ def init_session_state():
         st.session_state.applications = []
 
 
-async def fetch_jobs(status=None, keyword=None, page=1):
+def fetch_jobs(status=None, keyword=None, page=1):
     """获取职位列表"""
     params = {"page": page, "page_size": 20}
     if status:
@@ -31,40 +30,35 @@ async def fetch_jobs(status=None, keyword=None, page=1):
     if keyword:
         params["keyword"] = keyword
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{API_BASE}/jobs", params=params)
-        return response.json()
+    response = requests.get(f"{API_BASE}/jobs", params=params)
+    return response.json()
 
 
-async def fetch_applications(page=1):
+def fetch_applications(page=1):
     """获取投递记录"""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{API_BASE}/applications", params={"page": page})
-        return response.json()
+    response = requests.get(f"{API_BASE}/applications", params={"page": page})
+    return response.json()
 
 
-async def fetch_messages(page=1):
+def fetch_messages(page=1):
     """获取消息列表"""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{API_BASE}/messages", params={"page": page})
-        return response.json()
+    response = requests.get(f"{API_BASE}/messages", params={"page": page})
+    return response.json()
 
 
-async def fetch_profile():
+def fetch_profile():
     """获取用户画像"""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{API_BASE}/user/profile")
-        return response.json()
+    response = requests.get(f"{API_BASE}/user/profile")
+    return response.json()
 
 
-async def update_profile(data):
+def update_profile(data):
     """更新用户画像"""
-    async with httpx.AsyncClient() as client:
-        response = await client.put(f"{API_BASE}/user/profile", json=data)
-        return response.json()
+    response = requests.put(f"{API_BASE}/user/profile", json=data)
+    return response.json()
 
 
-async def search_and_apply(keywords, platforms, city, salary_min, salary_max, max_count, auto_apply, greeting):
+def search_and_apply(keywords, platforms, city, salary_min, salary_max, max_count, auto_apply, greeting):
     """搜索并投递"""
     data = {
         "keywords": keywords,
@@ -76,16 +70,14 @@ async def search_and_apply(keywords, platforms, city, salary_min, salary_max, ma
         "auto_apply": auto_apply,
         "greeting_template": greeting if greeting else None,
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(f"{API_BASE}/applications/search-and-apply", json=data)
-        return response.json()
+    response = requests.post(f"{API_BASE}/applications/search-and-apply", json=data, timeout=60.0)
+    return response.json()
 
 
-async def fetch_system_status():
+def fetch_system_status():
     """获取系统状态"""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{API_BASE}/system/status")
-        return response.json()
+    response = requests.get(f"{API_BASE}/system/status")
+    return response.json()
 
 
 def main():
@@ -141,7 +133,7 @@ def show_dashboard():
     # 最近职位
     st.subheader("最近职位")
     try:
-        result = asyncio.run(fetch_jobs(page=1))
+        result = fetch_jobs(page=1)
         jobs = result.get("items", [])
 
         if jobs:
@@ -223,7 +215,7 @@ def show_job_search():
         else:
             with st.spinner("正在搜索职位..."):
                 try:
-                    result = asyncio.run(search_and_apply(
+                    result = search_and_apply(
                         keywords=keywords,
                         platforms=platforms,
                         city=city,
@@ -232,7 +224,7 @@ def show_job_search():
                         max_count=max_count,
                         auto_apply=auto_apply,
                         greeting=greeting,
-                    ))
+                    )
 
                     st.success(f"搜索完成! 发现 {result['total_found']} 个职位，过滤后 {result['filtered']} 个")
 
@@ -273,7 +265,7 @@ def show_applications():
 
     # 获取投递记录
     try:
-        result = asyncio.run(fetch_applications(page=1))
+        result = fetch_applications(page=1)
         applications = result.get("items", [])
 
         if applications:
@@ -308,7 +300,7 @@ def show_messages():
 
     # 获取消息
     try:
-        result = asyncio.run(fetch_messages(page=1))
+        result = fetch_messages(page=1)
         messages = result.get("items", [])
 
         # 显示未读数
@@ -346,7 +338,7 @@ def show_user_config():
 
     # 获取用户画像
     try:
-        profile = asyncio.run(fetch_profile())
+        profile = fetch_profile()
     except Exception as e:
         st.error(f"加载用户信息失败: {e}")
         profile = {}
@@ -430,7 +422,7 @@ def show_user_config():
         }
 
         try:
-            asyncio.run(update_profile(update_data))
+            update_profile(update_data)
             st.success("配置已保存!")
         except Exception as e:
             st.error(f"保存失败: {e}")
@@ -443,7 +435,7 @@ def show_system_settings():
     # 系统状态
     st.subheader("系统状态")
     try:
-        status = asyncio.run(fetch_system_status())
+        status = fetch_system_status()
         col1, col2 = st.columns(2)
 
         with col1:
