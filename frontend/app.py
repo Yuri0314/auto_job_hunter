@@ -144,6 +144,58 @@ def logout_platform(platform):
     return response.json()
 
 
+# ========== 简历解析相关API ==========
+
+def parse_resume_file(file_path: str, use_ai: bool = False):
+    """解析指定路径的简历文件"""
+    response = requests.post(
+        f"{API_BASE}/resume/parse-file",
+        params={"file_path": file_path, "use_ai": use_ai},
+    )
+    return response.json()
+
+
+def upload_resume_file(file, use_ai: bool = False):
+    """上传并解析简历"""
+    files = {"file": file}
+    response = requests.post(
+        f"{API_BASE}/resume/upload",
+        files=files,
+        params={"use_ai": use_ai},
+    )
+    return response.json()
+
+
+def get_resume_status():
+    """获取简历状态"""
+    response = requests.get(f"{API_BASE}/resume/status")
+    return response.json()
+
+
+def confirm_resume_result(data):
+    """确认简历解析结果"""
+    response = requests.put(
+        f"{API_BASE}/resume/confirm",
+        json={"extracted_data": data},
+    )
+    return response.json()
+
+
+def start_one_click_job(platforms, auto_apply, max_apply, use_ai_keywords):
+    """一键求职"""
+    response = requests.post(
+        f"{API_BASE}/resume/one-click-job",
+        json={
+            "platforms": platforms,
+            "auto_apply": auto_apply,
+            "max_apply": max_apply,
+            "use_ai_keywords": use_ai_keywords,
+        },
+        timeout=300.0,
+    )
+    return response.json()
+
+
 def main():
     """主函数"""
     st.set_page_config(
@@ -161,12 +213,14 @@ def main():
 
     page = st.sidebar.radio(
         "导航",
-        ["仪表盘", "职位搜索", "投递记录", "消息中心", "用户配置", "系统设置"],
+        ["仪表盘", "简历解析", "职位搜索", "投递记录", "消息中心", "用户配置", "系统设置"],
     )
 
     # 根据页面显示内容
     if page == "仪表盘":
         show_dashboard()
+    elif page == "简历解析":
+        show_resume_parser()
     elif page == "职位搜索":
         show_job_search()
     elif page == "投递记录":
@@ -177,6 +231,165 @@ def main():
         show_user_config()
     elif page == "系统设置":
         show_system_settings()
+
+
+def show_resume_parser():
+    """简历解析页面"""
+    st.title("📄 简历解析")
+
+    st.info("""
+    上传您的PDF简历，系统将自动提取关键信息并填充到用户画像。
+    解析成功后可以一键启动智能求职搜索。
+    """)
+
+    # 获取当前简历状态
+    try:
+        status = get_resume_status()
+        if status.get("has_resume"):
+            st.success("✅ 已有简历解析记录")
+            if status.get("resume_file"):
+                st.write(f"简历文件: `{status['resume_file']}`")
+    except:
+        pass
+
+    st.divider()
+
+    # 解析方式选择
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("方式一：上传PDF文件")
+        uploaded_file = st.file_uploader(
+            "选择PDF简历文件",
+            type=["pdf"],
+            key="resume_uploader",
+        )
+
+        use_ai = st.checkbox("使用AI模式提取", value=False, help="AI模式更准确但需要配置API Key，规则模式更快且免费")
+
+        if uploaded_file and st.button("解析上传的简历", type="primary"):
+            with st.spinner("正在解析简历..."):
+                try:
+                    result = upload_resume_file(uploaded_file, use_ai=use_ai)
+                    if result.get("success"):
+                        st.session_state["resume_result"] = result
+                        st.success("简历解析成功！")
+                        st.rerun()
+                    else:
+                        st.error(f"解析失败: {result.get('error', '未知错误')}")
+                except Exception as e:
+                    st.error(f"解析失败: {str(e)}")
+
+    with col2:
+        st.subheader("方式二：指定本地文件路径")
+        local_path = st.text_input(
+            "简历文件路径",
+            value=r"C:\Users\惠天宇\Documents\【简历】朱荣+27岁+3年工作经验+北京上海.pdf",
+            key="local_resume_path",
+        )
+
+        use_ai_local = st.checkbox("使用AI模式提取", value=False, key="use_ai_local")
+
+        if st.button("解析本地简历", type="primary", key="parse_local"):
+            if local_path:
+                with st.spinner("正在解析简历..."):
+                    try:
+                        result = parse_resume_file(local_path, use_ai=use_ai_local)
+                        if result.get("success"):
+                            st.session_state["resume_result"] = result
+                            st.success("简历解析成功！")
+                            st.rerun()
+                        else:
+                            st.error(f"解析失败: {result.get('error', '未知错误')}")
+                    except Exception as e:
+                        st.error(f"解析失败: {str(e)}")
+            else:
+                st.warning("请输入简历文件路径")
+
+    # 显示解析结果
+    if "resume_result" in st.session_state:
+        st.divider()
+        st.subheader("📋 解析结果")
+
+        result = st.session_state["resume_result"]
+        data = result.get("extracted_data", {})
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.write(f"**姓名**: {data.get('name', '-')}")
+            st.write(f"**年龄**: {data.get('age', '-')}")
+            st.write(f"**性别**: {data.get('gender', '-')}")
+            st.write(f"**手机**: {data.get('phone', '-')}")
+            st.write(f"**邮箱**: {data.get('email', '-')}")
+            st.write(f"**学历**: {data.get('education', '-')}")
+            st.write(f"**学校**: {data.get('school', '-')}")
+
+        with col2:
+            st.write(f"**工作年限**: {data.get('experience_years', '-')}年")
+            st.write(f"**所在城市**: {data.get('city', '-')}")
+            positions = data.get("target_positions", [])
+            st.write(f"**目标职位**: {', '.join(positions) if positions else '-'}")
+            cities = data.get("target_cities", [])
+            st.write(f"**目标城市**: {', '.join(cities) if cities else '-'}")
+            sal_min = data.get("expected_salary_min")
+            sal_max = data.get("expected_salary_max")
+            st.write(f"**期望薪资**: {sal_min or '?'}-{sal_max or '?'}K")
+
+        # 技能
+        skills = data.get("skills", [])
+        if skills:
+            st.write(f"**核心技能**: {', '.join(skills[:10])}")
+
+        # 简历文本预览
+        with st.expander("查看简历文本"):
+            resume_text = result.get("resume_text", "")
+            st.text_area("简历内容", resume_text[:3000], height=200)
+
+        # 一键求职
+        st.divider()
+        st.subheader("🚀 一键启动求职")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            platforms = st.multiselect(
+                "选择平台",
+                ["boss", "liepin"],
+                default=["boss"],
+                key="one_click_platforms",
+            )
+            auto_apply = st.checkbox("自动投递", value=False, key="one_click_auto_apply")
+
+        with col2:
+            max_apply = st.slider("最大投递数", 5, 50, 20, key="one_click_max_apply")
+            use_ai_keywords = st.checkbox("使用AI生成搜索关键词", value=False, key="one_click_use_ai")
+
+        if st.button("启动智能求职", type="primary", key="start_one_click"):
+            if not platforms:
+                st.warning("请至少选择一个平台")
+            else:
+                with st.spinner("正在搜索职位..."):
+                    try:
+                        job_result = start_one_click_job(
+                            platforms=platforms,
+                            auto_apply=auto_apply,
+                            max_apply=max_apply,
+                            use_ai_keywords=use_ai_keywords,
+                        )
+
+                        if job_result.get("success"):
+                            st.success("搜索完成！")
+
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("使用关键词", ", ".join(job_result.get("keywords_used", [])))
+                            col2.metric("发现职位", job_result.get("total_found", 0))
+                            col3.metric("已投递", job_result.get("total_applied", 0))
+                        else:
+                            st.error(f"搜索失败: {job_result.get('error', '未知错误')}")
+
+                    except Exception as e:
+                        st.error(f"搜索失败: {str(e)}")
 
 
 def show_dashboard():

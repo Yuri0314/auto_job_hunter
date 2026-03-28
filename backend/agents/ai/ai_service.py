@@ -206,6 +206,111 @@ class AIService:
 
         return MatchResult.from_dict(result)
 
+    async def extract_resume_info(self, resume_text: str) -> Dict[str, Any]:
+        """
+        从简历文本中提取结构化信息
+
+        Args:
+            resume_text: 简历文本内容
+
+        Returns:
+            提取的结构化信息字典
+        """
+        prompt = f"""请从以下简历文本中提取关键信息，并以JSON格式返回。
+
+【简历文本】
+{resume_text}
+
+请提取以下信息并输出JSON格式:
+{{
+    "name": "姓名",
+    "gender": "性别(男/女)",
+    "age": 年龄(整数),
+    "phone": "手机号码",
+    "email": "邮箱地址",
+    "city": "所在城市",
+    "education": "学历(高中/大专/本科/硕士/博士)",
+    "school": "毕业院校",
+    "major": "专业",
+    "experience_years": 工作年限(整数),
+    "target_positions": ["目标职位1", "目标职位2"],
+    "target_cities": ["目标城市1", "目标城市2"],
+    "expected_salary_min": 期望薪资下限(K/月,整数),
+    "expected_salary_max": 期望薪资上限(K/月,整数),
+    "skills": ["技能1", "技能2", "技能3"],
+    "certifications": ["证书1", "证书2"],
+    "work_experiences": [
+        {{
+            "company": "公司名称",
+            "position": "职位",
+            "duration": "工作时间",
+            "description": "工作描述"
+        }}
+    ],
+    "summary": "个人简介或求职意向总结"
+}}
+
+注意事项:
+1. 如果某项信息在简历中不存在，请设为null
+2. 薪资期望如果写的是范围(如15-25K)，请拆分为min和max
+3. 技能请提取具体的技术栈、工具、语言等
+4. 目标职位根据求职意向或最近工作经历推断
+5. 仅返回JSON，不要添加其他文字"""
+
+        messages = [
+            {"role": "system", "content": "你是一个专业的简历解析助手，擅长从简历中提取关键信息并结构化输出。"},
+            {"role": "user", "content": prompt},
+        ]
+
+        self._cost_tracker.record_request()
+        result = await self._provider.chat_with_json(messages)
+
+        return result
+
+    async def generate_search_keywords(self, user_profile: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        基于用户画像生成职位搜索关键词
+
+        Args:
+            user_profile: 用户画像信息字典
+
+        Returns:
+            包含关键词和推荐关键词的字典
+        """
+        profile_str = json.dumps(user_profile, ensure_ascii=False, indent=2)
+
+        prompt = f"""基于用户简历信息，生成适合的职位搜索关键词。
+
+【用户信息】
+{profile_str}
+
+请生成5-10个搜索关键词组合，以JSON格式返回:
+{{
+    "keywords": [
+        "关键词组合1",
+        "关键词组合2"
+    ],
+    "recommended_priority": ["最推荐的关键词", "次推荐的关键词"],
+    "search_strategy": "搜索策略建议"
+}}
+
+要求:
+1. 关键词要精准匹配职位需求
+2. 考虑技能+职位的组合(如"Python后端")
+3. 考虑不同表述方式(如"Java开发"和"Java工程师")
+4. 优先推荐匹配度高的关键词
+5. 仅返回JSON，不要添加其他文字"""
+
+        messages = [
+            {"role": "system", "content": "你是一个求职顾问，擅长生成精准的职位搜索关键词。"},
+            {"role": "user", "content": prompt},
+        ]
+
+        self._cost_tracker.record_request()
+        result = await self._provider.chat_with_json(messages)
+
+        return result
+
     async def generate_greeting(
         self,
         match_result: MatchResult,
