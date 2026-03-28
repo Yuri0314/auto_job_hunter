@@ -97,30 +97,43 @@ async def search_and_apply(
     db: Session = Depends(get_db),
 ):
     """搜索并投递职位"""
-    from backend.services import get_orchestrator
+    from backend.services import Orchestrator
     from backend.adapters import Platform
+    from loguru import logger
 
     try:
+        logger.info(f"收到搜索请求: keywords={request.keywords}, platforms={request.platforms}")
+
         # 转换平台
         platforms = [Platform(p) for p in request.platforms]
+        logger.info(f"平台转换完成: {platforms}")
 
-        # 获取协调器
-        orchestrator = await get_orchestrator(use_ai=False)
+        # 创建新的 orchestrator 实例（不使用单例）
+        orchestrator = Orchestrator(use_ai=False)
+        await orchestrator.initialize()
+        logger.info("Orchestrator初始化成功")
 
         # 搜索职位
         salary_range = None
         if request.salary_min and request.salary_max:
             salary_range = (request.salary_min, request.salary_max)
 
+        logger.info(f"开始搜索职位...")
         jobs = await orchestrator.search_jobs(
             platforms=platforms,
             keywords=request.keywords,
             city=request.city,
             salary_range=salary_range,
         )
+        logger.info(f"搜索完成，找到 {len(jobs)} 个职位")
+
+        # Debug: 打印第一个job的字段
+        if jobs:
+            logger.info(f"第一个job: id={jobs[0].id}, title={jobs[0].title}, salary={jobs[0].salary}")
 
         # 过滤职位
         filtered_jobs = await orchestrator.filter_jobs(jobs)
+        logger.info(f"过滤完成，剩余 {len(filtered_jobs)} 个职位")
 
         result = {
             "total_found": len(jobs),

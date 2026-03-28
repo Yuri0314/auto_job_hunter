@@ -30,6 +30,7 @@ env/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -73,3 +74,10 @@ output/
 temp/
 *.pdf
 *.docx
+
+# Cookies and sensitive data
+cookies/
+
+# Debug screenshots
+*.png
+!docs/**/*.png
