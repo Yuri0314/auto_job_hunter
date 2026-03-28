@@ -126,17 +126,21 @@ class Orchestrator:
         keywords: str,
         city: Optional[str] = None,
         salary_range: Optional[tuple] = None,
-        max_pages: int = 5,
+        max_pages: int = 3,
     ) -> List[JobInfo]:
         """搜索职位"""
         all_jobs = []
 
         for platform in platforms:
             try:
+                logger.info(f"开始搜索 {platform.value} 平台...")
                 adapter = self.get_adapter(platform)
 
                 # 检查登录状态
-                if not await adapter.check_login_status():
+                logged_in = await adapter.check_login_status()
+                logger.info(f"{platform.value} 登录状态: {logged_in}")
+
+                if not logged_in:
                     logger.warning(f"Not logged in to {platform.value}, skipping...")
                     continue
 

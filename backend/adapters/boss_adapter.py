@@ -2,10 +2,11 @@
 
 import asyncio
 import re
+import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from loguru import logger
-from playwright.async_api import Page, BrowserContext
+from playwright.async_api import Page, BrowserContext, Response
 
 from backend.adapters.base_adapter import (
     BasePlatformAdapter,
@@ -21,17 +22,28 @@ from backend.automation.interaction import HumanSimulator
 
 
 class BossAdapter(BasePlatformAdapter):
-    """BOSS直聘平台适配器"""
+    """BOSS直聘平台适配器
+
+    使用API拦截方式获取职位数据，绕过BOSS的动态字体渲染。
+    API返回的salaryDesc已经是解码好的正确薪资。
+    """
 
     platform = Platform.BOSS
 
     # 平台配置
     BASE_URL = "https://www.zhipin.com"
     LOGIN_URL = "https://www.zhipin.com/web/user/?ka=header-login"
-    SEARCH_URL = "https://www.zhipin.com/web/geek/job"
+    SEARCH_URL = "https://www.zhipin.com/web/geek/jobs"
+
+    # API endpoints
+    JOBLIST_API = "/wapi/zpgeek/search/joblist.json"
+    JOB_DETAIL_API = "/wapi/zpgeek/job/detail.json"
 
     # 登录状态检查选择器
-    LOGIN_INDICATOR = ".nav-figure"  # 登录后显示的头像
+    LOGIN_INDICATOR = "//li[@class='nav-figure']"  # 登录后显示的头像
+
+    # 职位列表选择器 (备用，当API拦截失败时使用)
+    JOB_CARD_SELECTOR = "ul.rec-job-list li.job-card-box"
 
     def __init__(
         self,
@@ -43,6 +55,7 @@ class BossAdapter(BasePlatformAdapter):
         self.cookie_manager = cookie_manager or get_cookie_manager()
         self.human_sim = HumanSimulator()
         self._page: Optional[Page] = None
+        self._api_data: Dict[str, Any] = {}  # 缓存API响应数据
 
     @property
     def name(self) -> str:
@@ -52,54 +65,68 @@ class BossAdapter(BasePlatformAdapter):
     def base_url(self) -> str:
         return self.BASE_URL
 
-    async def _get_page(self) -> Page:
-        """获取页面对象"""
+    async def _get_page(self, load_cookies: bool = True) -> Page:
+        """获取页面对象
+
+        Args:
+            load_cookies: 是否自动加载已保存的 Cookie（登录时设为 False）
+        """
         if not self._page or self._page.is_closed():
             await self.browser_manager.start()
             self._page = await self.browser_manager.new_page()
+
+            # 自动加载已保存的 Cookie
+            if load_cookies:
+                context = self.browser_manager._context
+                if context:
+                    loaded = await self.cookie_manager.load_cookies(context, "boss")
+                    if loaded:
+                        logger.info("Auto-loaded saved cookies for BOSS")
+
         return self._page
 
     async def login(self, username: str, password: str) -> bool:
         """登录BOSS直聘
 
-        注意: BOSS直聘通常需要扫码登录或短信验证码
-        此方法提供自动登录框架，但主要依赖Cookie持久化
+        用户手动在浏览器中输入手机号+验证码登录
         """
         try:
-            page = await self._get_page()
+            # 清除旧的 Cookie 文件，确保干净的登录环境
+            self.cookie_manager.delete_cookies("boss")
+            logger.info("Cleared old cookies for fresh login")
+
+            # 关闭旧页面
+            if self._page and not self._page.is_closed():
+                await self._page.close()
+                self._page = None
+
+            # 启动浏览器
+            await self.browser_manager.start()
+            self._page = await self.browser_manager.new_page()
             context = self.browser_manager._context
 
-            # 尝试加载已保存的Cookie
-            if context:
-                loaded = await self.cookie_manager.load_cookies(context, "boss")
-                if loaded:
-                    logger.info("Loaded saved cookies for BOSS")
-                    await page.goto(self.BASE_URL)
-                    await asyncio.sleep(2)
-
-                    if await self.check_login_status():
-                        self._logged_in = True
-                        return True
-
-            # 跳转到登录页
-            await page.goto(self.LOGIN_URL)
+            # 直接跳转到登录页
+            logger.info(f"Navigating to login page: {self.LOGIN_URL}")
+            await self._page.goto(self.LOGIN_URL)
             await asyncio.sleep(2)
 
-            logger.warning(
-                "BOSS直聘通常需要扫码登录或短信验证码。"
-                "请手动完成登录，登录成功后程序将自动保存Cookie。"
-            )
+            logger.info("请在打开的浏览器中输入手机号+验证码完成登录")
 
             # 等待用户手动登录（最多等待5分钟）
-            for _ in range(150):  # 5分钟 = 150 * 2秒
+            for i in range(150):  # 5分钟 = 150 * 2秒
                 await asyncio.sleep(2)
-                if await self.check_login_status():
+                # 检查当前页面是否有登录后的头像
+                avatar = await self._page.query_selector(self.LOGIN_INDICATOR)
+                if avatar:
                     self._logged_in = True
                     # 保存Cookie
                     if context:
                         await self.cookie_manager.save_cookies(context, "boss")
                     logger.info("Login successful, cookies saved")
                     return True
+                # 每30秒提示一下
+                if i > 0 and i % 15 == 0:
+                    logger.info(f"等待登录中... ({i * 2}秒)")
 
             logger.error("Login timeout")
             return False
@@ -113,7 +140,11 @@ class BossAdapter(BasePlatformAdapter):
         try:
             page = await self._get_page()
 
-            # 检查是否有用户头像（登录后显示）
+            # 先访问首页 - 使用 load 而不是 networkidle，更快
+            await page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(1)
+
+            # 检查是否有用户头像（登录后显示）- 使用XPath
             avatar = await page.query_selector(self.LOGIN_INDICATOR)
             return avatar is not None
 
@@ -130,9 +161,29 @@ class BossAdapter(BasePlatformAdapter):
         page: int = 1,
         page_size: int = 20,
     ) -> SearchResult:
-        """搜索职位"""
+        """搜索职位 - 使用API拦截获取数据
+
+        BOSS的API返回已解码的薪资数据，无需处理动态字体。
+        """
         try:
             page_obj = await self._get_page()
+
+            # 缓存API响应数据
+            self._api_data = {}
+
+            async def capture_api_response(response: Response):
+                """捕获joblist API响应"""
+                url = response.url
+                if self.JOBLIST_API in url:
+                    try:
+                        body = await response.body()
+                        data = json.loads(body.decode('utf-8'))
+                        self._api_data['joblist'] = data
+                        logger.info(f"Captured joblist API: {len(body)} bytes")
+                    except Exception as e:
+                        logger.warning(f"Failed to capture joblist API: {e}")
+
+            page_obj.on("response", capture_api_response)
 
             # 构建搜索URL
             url = f"{self.SEARCH_URL}?query={keywords}"
@@ -152,7 +203,6 @@ class BossAdapter(BasePlatformAdapter):
 
             if salary_range:
                 min_sal, max_sal = salary_range
-                # BOSS薪资代码映射
                 salary_code = self._get_salary_code(min_sal, max_sal)
                 if salary_code:
                     url += f"&salary={salary_code}"
@@ -165,18 +215,35 @@ class BossAdapter(BasePlatformAdapter):
             url += f"&page={page}"
 
             # 访问搜索页
-            await page_obj.goto(url)
-            await asyncio.sleep(2)
+            logger.info(f"Navigating to: {url}")
 
-            # 等待职位列表加载
-            await page_obj.wait_for_selector(".job-list-box", timeout=10000)
+            # 使用load事件等待页面加载
+            await page_obj.goto(url, wait_until="load", timeout=30000)
 
-            # 解析职位列表
-            jobs = await self._parse_job_list(page_obj)
+            # 等待API响应 - 5秒应该足够
+            await asyncio.sleep(5)
+
+            # 检查是否被重定向到登录页面
+            current_url = page_obj.url
+            if "login" in current_url.lower() or "user" in current_url.lower():
+                logger.warning("Redirected to login page")
+                return SearchResult(error="需要先登录BOSS直聘，请在平台管理中完成登录")
+
+            # 优先使用API数据
+            if 'joblist' in self._api_data:
+                jobs = self._parse_joblist_api(self._api_data['joblist'])
+                logger.info(f"Parsed {len(jobs)} jobs from API")
+            else:
+                # 备用：从DOM解析
+                logger.warning("API data not captured, falling back to DOM parsing")
+                jobs = await self._parse_job_list(page_obj)
+                logger.info(f"Parsed {len(jobs)} jobs from DOM")
 
             # 检查是否有更多
-            next_btn = await page_obj.query_selector(".options-pages a[ka='page-next']")
-            has_more = next_btn is not None
+            has_more = False
+            if 'joblist' in self._api_data:
+                zpData = self._api_data['joblist'].get('zpData', {})
+                has_more = zpData.get('hasMore', False)
 
             return SearchResult(
                 jobs=jobs,
@@ -188,71 +255,136 @@ class BossAdapter(BasePlatformAdapter):
 
         except Exception as e:
             logger.error(f"Search jobs failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return SearchResult(error=str(e))
 
-    async def _parse_job_list(self, page: Page) -> List[JobInfo]:
-        """解析职位列表"""
+    def _parse_joblist_api(self, api_data: dict) -> List[JobInfo]:
+        """解析API返回的职位列表数据
+
+        API返回的数据结构:
+        {
+            "code": 0,
+            "zpData": {
+                "resCount": 450,
+                "jobList": [
+                    {
+                        "jobName": "python",
+                        "brandName": "华为技术有限公司",
+                        "salaryDesc": "200-250元/天",  # 已解码的正确薪资
+                        "cityName": "杭州",
+                        ...
+                    }
+                ]
+            }
+        }
+        """
         jobs = []
 
-        job_cards = await page.query_selector_all(".job-card-wrapper")
+        zpData = api_data.get('zpData', {})
+        job_list = zpData.get('jobList', [])
+
+        for job_data in job_list:
+            try:
+                # 解析薪资
+                salary_desc = job_data.get('salaryDesc', '')
+                salary_min, salary_max = self._parse_salary(salary_desc)
+
+                job = JobInfo(
+                    id=job_data.get('encryptJobId', ''),
+                    title=job_data.get('jobName', '').strip(),
+                    company=job_data.get('brandName', '').strip(),
+                    salary=salary_desc.strip(),
+                    salary_min=salary_min,
+                    salary_max=salary_max,
+                    city=job_data.get('cityName', '').strip(),
+                    description=' '.join(job_data.get('skills', [])),
+                    url=f"{self.BASE_URL}/job_detail/{job_data.get('encryptJobId', '')}.html",
+                    platform="boss",
+                    # 额外信息 - 使用正确的字段名
+                    experience_required=job_data.get('jobExperience', ''),
+                    hr_name=job_data.get('bossName', ''),
+                )
+                jobs.append(job)
+            except Exception as e:
+                logger.debug(f"Parse job from API error: {e}")
+                continue
+
+        return jobs
+
+    async def _parse_job_list(self, page: Page) -> List[JobInfo]:
+        """解析职位列表 - 备用的DOM解析方式"""
+        jobs = []
+
+        # 使用 get_jobs 项目的选择器
+        job_cards = await page.query_selector_all("ul.rec-job-list li.job-card-box")
+
+        if not job_cards:
+            logger.warning("No job cards found in DOM")
+            return jobs
 
         for card in job_cards:
             try:
-                # 提取职位ID
-                job_link = await card.query_selector(".job-card-left")
-                href = await job_link.get_attribute("href") if job_link else ""
-                job_id = self._extract_job_id(href) if href else ""
-
-                # 提取职位标题
-                title_el = await card.query_selector(".job-name")
-                title = await title_el.inner_text() if title_el else ""
-
-                # 提取薪资
-                salary_el = await card.query_selector(".salary")
-                salary_text = await salary_el.inner_text() if salary_el else ""
-                salary_min, salary_max = self._parse_salary(salary_text)
-
-                # 提取公司名称
-                company_el = await card.query_selector(".company-name a")
-                company = await company_el.inner_text() if company_el else ""
-
-                # 提取公司信息标签
-                tags = await card.query_selector_all(".company-tag-list li")
-                company_info = []
-                for tag in tags:
-                    text = await tag.inner_text()
-                    company_info.append(text)
-
-                # 提取城市
-                area_el = await card.query_selector(".job-area")
-                city = await area_el.inner_text() if area_el else ""
-
-                # 提取职位标签
-                job_tags = await card.query_selector_all(".tag-list li")
-                job_tag_texts = []
-                for tag in job_tags:
-                    text = await tag.inner_text()
-                    job_tag_texts.append(text)
-
-                job = JobInfo(
-                    id=job_id,
-                    title=title.strip(),
-                    company=company.strip(),
-                    salary=salary_text.strip(),
-                    salary_min=salary_min,
-                    salary_max=salary_max,
-                    city=city.strip().split("·")[0],  # 去掉区县
-                    description=" ".join(job_tag_texts),
-                    url=f"{self.BASE_URL}{href}" if href else None,
-                    platform="boss",
-                )
-                jobs.append(job)
-
+                job = await self._parse_job_card(card)
+                if job and job.title:
+                    jobs.append(job)
             except Exception as e:
                 logger.debug(f"Parse job card error: {e}")
                 continue
 
         return jobs
+
+    async def _parse_job_card(self, card) -> Optional[JobInfo]:
+        """解析单个职位卡片"""
+        try:
+            # 提取职位标题
+            title_el = await card.query_selector("a.job-name")
+            title = await title_el.inner_text() if title_el else ""
+
+            # 提取链接和职位ID
+            href = await title_el.get_attribute("href") if title_el else ""
+            job_id = self._extract_job_id(href) if href else ""
+
+            # 提取薪资 - 尝试多个选择器
+            salary_text = ""
+            salary_el = await card.query_selector(".job-salary")
+            if salary_el:
+                raw_salary = await salary_el.inner_text()
+                salary_text = self._decode_salary(raw_salary)
+
+            # 提取公司名称
+            company_el = await card.query_selector("span.boss-name")
+            company = await company_el.inner_text() if company_el else ""
+
+            # 提取城市区域
+            area_el = await card.query_selector("span.company-location")
+            city = await area_el.inner_text() if area_el else ""
+
+            # 提取职位标签
+            tag_els = await card.query_selector_all("ul.tag-list li")
+            tags = []
+            for tag in tag_els:
+                text = await tag.inner_text()
+                if text.strip():
+                    tags.append(text.strip())
+
+            salary_min, salary_max = self._parse_salary(salary_text)
+
+            return JobInfo(
+                id=job_id,
+                title=title.strip(),
+                company=company.strip(),
+                salary=salary_text.strip(),
+                salary_min=salary_min,
+                salary_max=salary_max,
+                city=city.strip().split("·")[0] if city else "",
+                description=" ".join(tags),
+                url=f"{self.BASE_URL}{href}" if href else None,
+                platform="boss",
+            )
+        except Exception as e:
+            logger.debug(f"Parse job card error: {e}")
+            return None
 
     async def get_job_detail(self, job_id: str) -> Optional[JobInfo]:
         """获取职位详情"""
@@ -369,25 +501,195 @@ class BossAdapter(BasePlatformAdapter):
             return []
 
     async def _parse_chat_item(self, item) -> Optional[Message]:
-        """解析单个消息项"""
-        # TODO: 实现消息解析
-        return None
+        """解析单个消息项
+
+        BOSS直聘消息列表结构:
+        .chat-item 包含:
+        - .name: HR姓名
+        - .company-text: 公司名称
+        - .msg-text: 最新消息内容
+        - .time: 时间
+        - .unread: 未读标记
+        - data-geek: 会话ID
+        """
+        try:
+            # 获取会话ID
+            chat_id = await item.get_attribute("data-geek")
+            if not chat_id:
+                # 尝试从其他属性获取
+                chat_id = await item.get_attribute("data-id")
+
+            # HR姓名
+            name_el = await item.query_selector(".name")
+            hr_name = await name_el.inner_text() if name_el else "HR"
+
+            # 公司名称
+            company_el = await item.query_selector(".company-text")
+            if not company_el:
+                company_el = await item.query_selector(".company-name")
+            company = await company_el.inner_text() if company_el else ""
+
+            # 最新消息内容
+            msg_el = await item.query_selector(".msg-text")
+            if not msg_el:
+                msg_el = await item.query_selector(".msg")
+            content = await msg_el.inner_text() if msg_el else ""
+
+            # 时间
+            time_el = await item.query_selector(".time")
+            time_text = await time_el.inner_text() if time_el else ""
+            timestamp = self._parse_message_time(time_text)
+
+            # 未读标记
+            unread_el = await item.query_selector(".unread")
+            is_read = unread_el is None
+
+            # 职位名称（可能在消息内容附近）
+            job_el = await item.query_selector(".job-name")
+            job_title = await job_el.inner_text() if job_el else None
+
+            return Message(
+                id=chat_id or "",
+                hr_name=hr_name.strip(),
+                company=company.strip(),
+                content=content.strip(),
+                timestamp=timestamp,
+                is_read=is_read,
+                job_title=job_title.strip() if job_title else None,
+                platform="boss",
+            )
+
+        except Exception as e:
+            logger.debug(f"Parse chat item error: {e}")
+            return None
+
+    def _parse_message_time(self, time_text: str) -> datetime:
+        """解析消息时间
+
+        支持格式:
+        - HH:MM (今天)
+        - 昨天 HH:MM
+        - MM-DD HH:MM
+        - YYYY-MM-DD
+        """
+        now = datetime.now()
+
+        if not time_text:
+            return now
+
+        time_text = time_text.strip()
+
+        # 格式: HH:MM (今天)
+        if ":" in time_text and len(time_text) <= 5:
+            try:
+                hour, minute = time_text.split(":")
+                return now.replace(hour=int(hour), minute=int(minute), second=0)
+            except ValueError:
+                pass
+
+        # 格式: 昨天 HH:MM
+        if "昨天" in time_text:
+            time_part = time_text.replace("昨天", "").strip()
+            try:
+                hour, minute = time_part.split(":")
+                yesterday = now.replace(day=now.day - 1)
+                return yesterday.replace(hour=int(hour), minute=int(minute), second=0)
+            except ValueError:
+                return now.replace(day=now.day - 1)
+
+        # 格式: MM-DD HH:MM
+        if "-" in time_text and ":" in time_text:
+            try:
+                date_part, time_part = time_text.split(" ")
+                month, day = date_part.split("-")
+                hour, minute = time_part.split(":")
+                return now.replace(
+                    month=int(month),
+                    day=int(day),
+                    hour=int(hour),
+                    minute=int(minute),
+                    second=0,
+                )
+            except ValueError:
+                pass
+
+        # 格式: MM-DD
+        if "-" in time_text and len(time_text) <= 5:
+            try:
+                month, day = time_text.split("-")
+                return now.replace(month=int(month), day=int(day))
+            except ValueError:
+                pass
+
+        return now
 
     async def reply_message(
         self,
         message_id: str,
         content: str,
     ) -> bool:
-        """回复消息"""
+        """回复消息
+
+        Args:
+            message_id: 会话ID (data-geek)
+            content: 回复内容
+
+        Returns:
+            是否成功
+        """
         try:
             page = await self._get_page()
 
-            # 访问消息页面并找到对应会话
+            # 访问消息页面
             await page.goto(f"{self.BASE_URL}/web/geek/chat")
             await asyncio.sleep(2)
 
-            # TODO: 实现消息回复
-            return False
+            # 查找对应会话
+            chat_item = await page.query_selector(f'.chat-item[data-geek="{message_id}"]')
+            if not chat_item:
+                # 尝试用 data-id
+                chat_item = await page.query_selector(f'.chat-item[data-id="{message_id}"]')
+
+            if not chat_item:
+                logger.warning(f"Chat item not found: {message_id}")
+                return False
+
+            # 点击进入会话
+            await chat_item.click()
+            await asyncio.sleep(1)
+
+            # 查找输入框
+            input_el = await page.query_selector(".chat-input")
+            if not input_el:
+                # 尝试其他选择器
+                input_el = await page.query_selector("textarea[placeholder]")
+                if not input_el:
+                    input_el = await page.query_selector(".input-box textarea")
+
+            if not input_el:
+                logger.error("Chat input not found")
+                return False
+
+            # 使用人机模拟输入
+            await self.human_sim.human_type(page, ".chat-input", content)
+            await asyncio.sleep(1)
+
+            # 发送消息
+            send_btn = await page.query_selector(".send-btn")
+            if not send_btn:
+                send_btn = await page.query_selector("button:has-text('发送')")
+
+            if send_btn:
+                await send_btn.click()
+                await asyncio.sleep(1)
+                logger.info(f"Message sent to {message_id}")
+                return True
+            else:
+                # 尝试按 Enter 发送
+                await input_el.press("Enter")
+                await asyncio.sleep(1)
+                logger.info(f"Message sent to {message_id} (via Enter)")
+                return True
 
         except Exception as e:
             logger.error(f"Reply message failed: {e}")
@@ -400,16 +702,69 @@ class BossAdapter(BasePlatformAdapter):
             return match.group(1)
         return ""
 
+    def _decode_salary(self, text: str) -> str:
+        """Decode BOSS dynamic font rendered salary.
+
+        BOSS uses custom fonts to obfuscate numbers.
+        Maps Unicode chars back to real numbers.
+        Two encoding ranges used:
+        - Old: U+E8Fx
+        - New: U+E03x
+        """
+        if not text:
+            return text
+
+        # BOSS custom font mapping (old version)
+        font_map = {
+            '\uE8F0': '0', '\ue8f0': '0',
+            '\uE8F1': '1', '\ue8f1': '1',
+            '\uE8F2': '2', '\ue8f2': '2',
+            '\uE8F3': '3', '\ue8f3': '3',
+            '\uE8F4': '4', '\ue8f4': '4',
+            '\uE8F5': '5', '\ue8f5': '5',
+            '\uE8F6': '6', '\ue8f6': '6',
+            '\uE8F7': '7', '\ue8f7': '7',
+            '\uE8F8': '8', '\ue8f8': '8',
+            '\uE8F9': '9', '\ue8f9': '9',
+            # New version encoding
+            '\uE030': '0', '\ue030': '0',
+            '\uE031': '1', '\ue031': '1',
+            '\uE032': '2', '\ue032': '2',
+            '\uE033': '3', '\ue033': '3',
+            '\uE034': '4', '\ue034': '4',
+            '\uE035': '5', '\ue035': '5',
+            '\uE036': '6', '\ue036': '6',
+            '\uE037': '7', '\ue037': '7',
+            '\uE038': '8', '\ue038': '8',
+            '\uE039': '9', '\ue039': '9',
+        }
+
+        result = []
+        for char in text:
+            result.append(font_map.get(char, char))
+        return ''.join(result)
+
     def _parse_salary(self, salary_text: str) -> tuple:
         """解析薪资文本，返回(min, max) K"""
+        if not salary_text:
+            return None, None
+
+        # 先解码动态字体
+        decoded = self._decode_salary(salary_text)
+
         # 示例: "15-25K" -> (15, 25)
-        match = re.search(r"(\d+)-(\d+)K", salary_text)
+        match = re.search(r"(\d+)-(\d+)K", decoded, re.IGNORECASE)
         if match:
             return int(match.group(1)), int(match.group(2))
 
-        match = re.search(r"(\d+)K以上", salary_text)
+        match = re.search(r"(\d+)K以上", decoded, re.IGNORECASE)
         if match:
             return int(match.group(1)), 999
+
+        # 也尝试解析"天"薪资
+        match = re.search(r"(\d+)-(\d+)元/天", decoded)
+        if match:
+            return int(match.group(1)), int(match.group(2))
 
         return None, None
 

@@ -11,7 +11,12 @@ import subprocess
 import sys
 import time
 import webbrowser
+import os
 from loguru import logger
+
+# Windows asyncio 兼容性修复
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from backend.core.config import get_settings
 from backend.core.database import init_db
@@ -66,23 +71,33 @@ async def run_daemon(interval: int = 60, use_ai: bool = False):
     await orchestrator.start_scheduled(interval_minutes=interval)
 
 
-async def run_web(host: str = "0.0.0.0", port: int = 8000):
+async def run_web(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
     """启动Web服务"""
     import uvicorn
 
     logger.info(f"Starting web server at {host}:{port}")
 
+    # Windows 兼容性：使用 WindowsSelectorEventLoopPolicy
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     uvicorn.run(
         "backend.main:app",
         host=host,
         port=port,
-        reload=True,
+        reload=reload,
     )
 
 
 def run_gui(backend_port: int = 8000, frontend_port: int = 8501, no_browser: bool = False):
     """一键启动GUI界面（后端+前端）"""
     import os
+    import signal
+    import urllib.request
+
+    # Windows asyncio 兼容性
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -90,72 +105,154 @@ def run_gui(backend_port: int = 8000, frontend_port: int = 8501, no_browser: boo
     print("Auto Job Hunter - 启动中...")
     print("=" * 50)
 
-    # 启动后端服务
-    print(f"\n[1/3] 启动后端服务 (端口 {backend_port})...")
-    backend_cmd = [
-        sys.executable, "-m", "uvicorn",
-        "backend.main:app",
-        "--host", "127.0.0.1",
-        "--port", str(backend_port),
-    ]
-    backend_process = subprocess.Popen(
-        backend_cmd,
-        cwd=project_root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # 检查端口是否已被占用
+    def check_port_in_use(port):
+        try:
+            urllib.request.urlopen(f"http://localhost:{port}/docs", timeout=1)
+            return True
+        except:
+            return False
 
-    # 启动前端服务
-    print(f"[2/3] 启动前端服务 (端口 {frontend_port})...")
-    frontend_cmd = [
-        sys.executable, "-m", "streamlit", "run",
-        "frontend/app.py",
-        "--server.port", str(frontend_port),
-        "--server.headless", "true",
-    ]
-    frontend_process = subprocess.Popen(
-        frontend_cmd,
-        cwd=project_root,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # 检查并提示
+    backend_running = check_port_in_use(backend_port)
+    frontend_running = check_port_in_use(frontend_port)
 
-    # 等待服务启动
-    print("[3/3] 等待服务就绪...")
-    time.sleep(2)
+    if backend_running:
+        print(f"\n[警告] 端口 {backend_port} 已被占用，后端服务可能已在运行")
+        print("  如需重启，请先关闭旧进程: taskkill /F /IM python.exe")
+        print("  或使用不同端口: python run.py gui --backend-port 8080")
 
-    # 打开浏览器
-    frontend_url = f"http://localhost:{frontend_port}"
-    if not no_browser:
-        print(f"正在打开浏览器: {frontend_url}")
-        webbrowser.open(frontend_url)
+    if frontend_running:
+        print(f"\n[警告] 端口 {frontend_port} 已被占用，前端服务可能已在运行")
 
-    print("\n" + "=" * 50)
-    print("服务已启动!")
-    print(f"  前端界面: {frontend_url}")
-    print(f"  后端API:  http://localhost:{backend_port}")
-    print(f"  API文档:  http://localhost:{backend_port}/docs")
-    print("=" * 50)
-    print("\n按 Ctrl+C 停止服务...")
+    if backend_running and frontend_running:
+        print("\n服务似乎已在运行，请在浏览器访问:")
+        print(f"  前端: http://localhost:{frontend_port}")
+        print(f"  后端: http://localhost:{backend_port}/docs")
+        return
+
+    backend_process = None
+    frontend_process = None
 
     try:
-        # 等待进程结束
+        # 启动后端服务（仅当端口未被占用）
+        if not backend_running:
+            print(f"\n[1/3] 启动后端服务 (端口 {backend_port})...")
+            backend_cmd = [
+                sys.executable, "-m", "uvicorn",
+                "backend.main:app",
+                "--host", "127.0.0.1",
+                "--port", str(backend_port),
+            ]
+            backend_process = subprocess.Popen(
+                backend_cmd,
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            # 等待后端启动
+            print("等待后端启动...")
+            max_wait = 30
+            backend_ready = False
+            for i in range(max_wait):
+                try:
+                    urllib.request.urlopen(f"http://localhost:{backend_port}/docs", timeout=1)
+                    backend_ready = True
+                    print("后端启动成功!")
+                    break
+                except:
+                    time.sleep(1)
+                    if i % 5 == 4:
+                        print(f"  等待中... ({i+1}s)")
+
+            if not backend_ready:
+                print("后端启动超时，请检查日志")
+                if backend_process:
+                    backend_process.terminate()
+                return
+        else:
+            print(f"\n[1/3] 后端服务已在运行 (端口 {backend_port})")
+
+        # 启动前端服务（仅当端口未被占用）
+        if not frontend_running:
+            print(f"\n[2/3] 启动前端服务 (端口 {frontend_port})...")
+            frontend_cmd = [
+                sys.executable, "-m", "streamlit", "run",
+                "frontend/app.py",
+                "--server.port", str(frontend_port),
+                "--server.headless", "true",
+                "--browser.gatherUsageStats", "false",
+            ]
+            frontend_process = subprocess.Popen(
+                frontend_cmd,
+                cwd=project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            # 等待前端启动
+            print("等待前端启动...")
+            time.sleep(3)
+        else:
+            print(f"\n[2/3] 前端服务已在运行 (端口 {frontend_port})")
+
+        # 打开浏览器
+        frontend_url = f"http://localhost:{frontend_port}"
+        print(f"\n[3/3] 服务就绪")
+        if not no_browser:
+            print(f"正在打开浏览器: {frontend_url}")
+            webbrowser.open(frontend_url)
+
+        print("\n" + "=" * 50)
+        print("服务已启动!")
+        print(f"  前端界面: {frontend_url}")
+        print(f"  后端API:  http://localhost:{backend_port}")
+        print(f"  API文档:  http://localhost:{backend_port}/docs")
+        print("=" * 50)
+        print("\n按 Ctrl+C 停止服务...")
+
+        # 保持运行，检查进程状态
         while True:
-            if backend_process.poll() is not None:
-                print("后端服务已停止")
+            if backend_process and backend_process.poll() is not None:
+                print(f"\n后端服务已停止 (退出码: {backend_process.returncode})")
                 break
-            if frontend_process.poll() is not None:
-                print("前端服务已停止")
+            if frontend_process and frontend_process.poll() is not None:
+                print(f"\n前端服务已停止 (退出码: {frontend_process.returncode})")
                 break
-            time.sleep(0.5)
+            time.sleep(1)
+
     except KeyboardInterrupt:
-        print("\n正在停止服务...")
+        print("\n\n正在停止服务...")
+    except Exception as e:
+        print(f"\n启动错误: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         # 确保两个进程都被终止
-        backend_process.terminate()
-        frontend_process.terminate()
-        backend_process.wait(timeout=5)
-        frontend_process.wait(timeout=5)
+        print("清理进程...")
+        if backend_process:
+            try:
+                backend_process.terminate()
+                backend_process.wait(timeout=5)
+            except:
+                try:
+                    backend_process.kill()
+                except:
+                    pass
+        if frontend_process:
+            try:
+                frontend_process.terminate()
+                frontend_process.wait(timeout=5)
+            except:
+                try:
+                    frontend_process.kill()
+                except:
+                    pass
         print("服务已停止")
 
 
@@ -281,8 +378,9 @@ def main():
         init_db()
         print("初始化完成!")
         print("\n请配置 .env 文件或设置环境变量:")
-        print("  - BOSS_USERNAME/BOSS_PASSWORD: BOSS直聘账号")
-        print("  - LIEPIN_USERNAME/LIEPIN_PASSWORD: 猎聘账号")
+        print("  - BOSS_PHONE: BOSS直聘手机号")
+        print("  - LIEPIN_PHONE: 猎聘手机号")
+        print("  - MAIMAI_PHONE: 脉脉手机号")
         print("  - OPENAI_API_KEY: OpenAI API密钥(可选)")
         print("\n启动Web服务: python -m backend.cli web")
         print("启动GUI界面: python -m backend.cli gui")

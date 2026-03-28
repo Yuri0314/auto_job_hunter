@@ -8,6 +8,7 @@ from .messages import router as messages_router
 from .user import router as user_router
 from .config import router as config_router
 from .system import router as system_router
+from .settings import router as settings_router
 
 api_router = APIRouter()
 
@@ -17,3 +18,4 @@ api_router.include_router(messages_router, prefix="/messages", tags=["Messages"]
 api_router.include_router(user_router, prefix="/user", tags=["User"])
 api_router.include_router(config_router, prefix="/config", tags=["Config"])
 api_router.include_router(system_router, prefix="/system", tags=["System"])
+api_router.include_router(settings_router, prefix="/settings", tags=["Settings"])

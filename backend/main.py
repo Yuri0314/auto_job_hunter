@@ -1,12 +1,20 @@
 """FastAPI主应用"""
 
+import sys
+
+# Windows asyncio 兼容性修复 - Playwright 需要子进程支持
+# 必须使用 ProactorEventLoopPolicy 而不是 SelectorEventLoopPolicy
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from backend.core.config import get_settings
-from backend.core.database import init_db
+from backend.core.config import get_settings, reload_settings
+from backend.core.database import init_db, SessionLocal
 from backend.api.routes import api_router
 
 
@@ -15,8 +23,18 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     logger.info("Starting Auto Job Hunter...")
+
+    # 初始化数据库
     init_db()
     logger.info("Database initialized")
+
+    # 加载配置（包含数据库覆盖）
+    db = SessionLocal()
+    try:
+        reload_settings(db)
+        logger.info("Configuration loaded (with database overrides)")
+    finally:
+        db.close()
 
     yield
 

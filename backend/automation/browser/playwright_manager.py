@@ -30,8 +30,20 @@ class PlaywrightManager:
 
     async def start(self) -> None:
         """启动浏览器"""
-        if self._browser:
-            return
+        # 如果浏览器已关闭，重新创建
+        if self._browser is not None:
+            try:
+                # 检查浏览器是否仍然有效
+                if self._browser.is_connected():
+                    return
+            except Exception:
+                pass
+            # 浏览器已断开连接，重置状态
+            logger.info("Browser was closed, restarting...")
+            self._browser = None
+            self._context = None
+            self._page = None
+            self._playwright = None
 
         logger.info("Starting Playwright browser...")
 
@@ -167,7 +179,15 @@ def get_browser_manager() -> PlaywrightManager:
     global _browser_manager
     if _browser_manager is None:
         settings = get_settings()
+        # 始终使用有界面模式，避免被反爬检测
+        # 如果需要后台运行，可以设置为 settings.debug
         _browser_manager = PlaywrightManager(
-            headless=not settings.debug,
+            headless=False,  # 有界面模式，更不容易被检测
         )
     return _browser_manager
+
+
+def reset_browser_manager():
+    """重置浏览器管理器（用于测试或浏览器被关闭后重启）"""
+    global _browser_manager
+    _browser_manager = None

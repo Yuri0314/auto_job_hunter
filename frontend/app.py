@@ -8,8 +8,8 @@ import streamlit as st
 import requests
 from datetime import datetime
 
-# API Base URL
-API_BASE = "http://localhost:8000/api"
+# API Base URL - 与后端默认端口保持一致
+API_BASE = "http://localhost:8888/api"
 
 
 def init_session_state():
@@ -70,13 +70,77 @@ def search_and_apply(keywords, platforms, city, salary_min, salary_max, max_coun
         "auto_apply": auto_apply,
         "greeting_template": greeting if greeting else None,
     }
-    response = requests.post(f"{API_BASE}/applications/search-and-apply", json=data, timeout=60.0)
+    # 搜索需要启动浏览器、翻页等，可能需要较长时间
+    response = requests.post(f"{API_BASE}/applications/search-and-apply", json=data, timeout=300.0)
     return response.json()
 
 
 def fetch_system_status():
     """获取系统状态"""
     response = requests.get(f"{API_BASE}/system/status")
+    return response.json()
+
+
+def fetch_config_items(category=None):
+    """获取配置项"""
+    params = {}
+    if category:
+        params["category"] = category
+    response = requests.get(f"{API_BASE}/settings/items", params=params)
+    return response.json()
+
+
+def fetch_config_categories():
+    """获取配置分类"""
+    response = requests.get(f"{API_BASE}/settings/categories")
+    return response.json()
+
+
+def update_config_item(key, value):
+    """更新单个配置项"""
+    response = requests.put(
+        f"{API_BASE}/settings/items/{key}",
+        json={"value": value}
+    )
+    return response.json()
+
+
+def batch_update_config(items):
+    """批量更新配置项"""
+    response = requests.put(
+        f"{API_BASE}/settings/batch",
+        json={"items": items}
+    )
+    return response.json()
+
+
+def reset_config_item(key):
+    """重置配置项"""
+    response = requests.post(f"{API_BASE}/settings/reset/{key}")
+    return response.json()
+
+
+def fetch_platform_status():
+    """获取平台登录状态"""
+    response = requests.get(f"{API_BASE}/system/platforms")
+    return response.json()
+
+
+def trigger_login(platform):
+    """触发平台登录"""
+    response = requests.post(f"{API_BASE}/system/login/{platform}")
+    return response.json()
+
+
+def fetch_login_status(platform):
+    """获取登录任务状态"""
+    response = requests.get(f"{API_BASE}/system/login-status/{platform}")
+    return response.json()
+
+
+def logout_platform(platform):
+    """退出登录（清除Cookie）"""
+    response = requests.post(f"{API_BASE}/system/logout/{platform}")
     return response.json()
 
 
@@ -432,11 +496,11 @@ def show_system_settings():
     """显示系统设置页面"""
     st.title("🔧 系统设置")
 
-    # 系统状态
+    # 系统状态概览
     st.subheader("系统状态")
     try:
         status = fetch_system_status()
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             st.info(f"版本: {status.get('version', 'unknown')}")
@@ -446,46 +510,359 @@ def show_system_settings():
             st.info(f"数据库: {status.get('database', 'unknown')}")
             st.info(f"AI配置: {'已配置' if status.get('ai_configured') else '未配置'}")
 
-        if status.get('platforms_configured'):
-            st.write(f"已配置平台: {', '.join(status['platforms_configured'])}")
+        with col3:
+            if status.get('platforms_configured'):
+                st.write(f"已配置平台: {', '.join(status['platforms_configured'])}")
 
     except Exception as e:
         st.error(f"获取系统状态失败: {e}")
 
-    # 平台登录
-    st.subheader("平台登录")
+    st.divider()
 
-    col1, col2 = st.columns(2)
+    # 创建 Tab 结构
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "基础配置", "平台账号", "AI配置", "高级设置"
+    ])
 
-    with col1:
-        st.write("**BOSS直聘**")
-        if st.button("登录BOSS直聘"):
-            st.info("请在浏览器中完成登录...")
+    with tab1:
+        show_basic_config()
 
-    with col2:
-        st.write("**猎聘**")
-        if st.button("登录猎聘"):
-            st.info("请在浏览器中完成登录...")
+    with tab2:
+        show_platform_accounts()
 
-    # 过滤规则
-    st.subheader("过滤规则")
+    with tab3:
+        show_ai_config()
 
-    with st.form("filter_rule"):
-        rule_name = st.text_input("规则名称")
-        col1, col2 = st.columns(2)
+    with tab4:
+        show_advanced_config()
+
+
+def show_basic_config():
+    """基础配置"""
+    try:
+        configs = fetch_config_items(category="basic")
+    except Exception as e:
+        st.error(f"加载配置失败: {e}")
+        return
+
+    st.subheader("应用基本设置")
+
+    # 调试模式
+    debug_config = configs.get("debug", {})
+    debug_enabled = st.checkbox(
+        "调试模式",
+        value=str(debug_config.get("effective_value", "false")).lower() == "true",
+        help=debug_config.get("description", ""),
+    )
+
+    # 日志级别
+    log_level_config = configs.get("log_level", {})
+    log_options = log_level_config.get("options", ["DEBUG", "INFO", "WARNING", "ERROR"])
+    current_log_level = log_level_config.get("effective_value", "INFO")
+    log_level = st.selectbox(
+        "日志级别",
+        log_options,
+        index=log_options.index(current_log_level) if current_log_level in log_options else 1,
+        help=log_level_config.get("description", ""),
+    )
+
+    # 调度开关
+    scheduler_config = configs.get("scheduler_enabled", {})
+    scheduler_enabled = st.checkbox(
+        "启用自动调度",
+        value=str(scheduler_config.get("effective_value", "true")).lower() == "true",
+        help=scheduler_config.get("description", ""),
+    )
+
+    # 最大并发数
+    max_jobs_config = configs.get("max_concurrent_jobs", {})
+    max_jobs = st.slider(
+        "最大并发任务数",
+        min_value=1,
+        max_value=20,
+        value=int(max_jobs_config.get("effective_value", 5)),
+        help=max_jobs_config.get("description", ""),
+    )
+
+    # 保存按钮
+    if st.button("保存基础配置", type="primary"):
+        try:
+            batch_update_config({
+                "debug": str(debug_enabled).lower(),
+                "log_level": log_level,
+                "scheduler_enabled": str(scheduler_enabled).lower(),
+                "max_concurrent_jobs": str(max_jobs),
+            })
+            st.success("配置已保存!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"保存失败: {e}")
+
+
+def show_platform_accounts():
+    """平台账号配置"""
+    # 使用说明
+    st.info("""
+    **使用流程：**
+    1. 点击「登录」按钮 → 系统会打开浏览器窗口
+    2. 在浏览器中输入手机号 + 验证码完成登录
+    3. 登录成功后系统自动保存登录状态（Cookie）
+    """)
+
+    try:
+        platform_status = fetch_platform_status()
+    except Exception as e:
+        st.error(f"加载状态失败: {e}")
+        return
+
+    platforms = [
+        {"name": "BOSS直聘", "prefix": "boss", "login_url": "https://www.zhipin.com"},
+        {"name": "猎聘", "prefix": "liepin", "login_url": "https://www.liepin.com"},
+        {"name": "脉脉", "prefix": "maimai", "login_url": "https://maimai.cn"},
+    ]
+
+    for platform in platforms:
+        prefix = platform["prefix"]
+        st.subheader(platform["name"])
+
+        # 获取平台状态
+        status_info = next(
+            (p for p in platform_status if p["platform"] == prefix),
+            {"cookie_saved": False}
+        )
+
+        # 显示登录状态
+        if status_info.get("cookie_saved"):
+            st.success("✅ 登录状态: 已登录")
+        else:
+            st.warning("⏳ 登录状态: 未登录")
+
+        # 登录操作按钮
+        col1, col2, col3 = st.columns([2, 1, 1])
 
         with col1:
-            keywords = st.text_area("关键词 (每行一个)")
-            exclude = st.text_area("排除关键词 (每行一个)")
-            cities = st.text_area("城市 (每行一个)")
+            if st.button(f"🔐 登录 {platform['name']}", key=f"login_{prefix}", type="primary"):
+                try:
+                    result = trigger_login(prefix)
+                    if result.get("status") == "started":
+                        st.success("浏览器已打开，请在浏览器中完成登录")
+                        st.info(f"登录地址: {platform['login_url']}")
+                    elif result.get("status") == "already_running":
+                        st.warning("登录任务正在进行中，请在浏览器中完成登录")
+                    else:
+                        st.error(f"启动失败: {result}")
+                except Exception as e:
+                    st.error(f"登录失败: {e}")
 
         with col2:
-            sal_min = st.number_input("薪资下限(K)", 0, 200, 0)
-            sal_max = st.number_input("薪资上限(K)", 0, 200, 0)
-            priority = st.number_input("优先级", 0, 100, 0)
+            if st.button(f"🔄 刷新", key=f"refresh_{prefix}"):
+                st.rerun()
 
-        if st.form_submit_button("添加规则"):
-            st.success("规则已添加!")
+        with col3:
+            if st.button(f"🚪 退出", key=f"logout_{prefix}"):
+                try:
+                    logout_platform(prefix)
+                    st.success("已退出登录")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"操作失败: {e}")
+
+        st.divider()
+
+
+def show_ai_config():
+    """AI配置"""
+    try:
+        configs = fetch_config_items(category="ai")
+    except Exception as e:
+        st.error(f"加载配置失败: {e}")
+        return
+
+    st.subheader("AI 服务配置")
+
+    # 判断当前使用的提供商
+    openai_key_config = configs.get("openai_api_key", {})
+    ollama_url_config = configs.get("ollama_base_url", {})
+
+    has_openai = openai_key_config.get("effective_value")
+    has_ollama = ollama_url_config.get("effective_value")
+
+    # 选择提供商
+    provider_options = ["OpenAI", "Ollama (本地)"]
+    current_provider = "OpenAI" if has_openai else ("Ollama (本地)" if has_ollama else "OpenAI")
+
+    provider = st.radio(
+        "AI服务提供商",
+        provider_options,
+        index=provider_options.index(current_provider),
+    )
+
+    if provider == "OpenAI":
+        st.subheader("OpenAI 配置")
+
+        # API Key 状态
+        if has_openai:
+            st.success("API Key: 已配置")
+        else:
+            st.warning("API Key: 未配置")
+
+        # 输入新 API Key
+        new_key = st.text_input(
+            "OpenAI API Key（填写则更新）",
+            value="",
+            type="password",
+            placeholder="sk-...",
+            help="更新 OpenAI API 密钥",
+        )
+
+        # 模型选择
+        model_config = configs.get("openai_model", {})
+        model_options = model_config.get("options", ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"])
+        current_model = model_config.get("effective_value", "gpt-4")
+
+        model = st.selectbox(
+            "模型",
+            model_options,
+            index=model_options.index(current_model) if current_model in model_options else 0,
+            help="选择使用的 GPT 模型",
+        )
+
+        if st.button("保存 OpenAI 配置", type="primary"):
+            try:
+                updates = {"openai_model": model}
+                if new_key:
+                    updates["openai_api_key"] = new_key
+                batch_update_config(updates)
+                st.success("配置已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+
+        if st.button("重置 OpenAI API Key"):
+            try:
+                reset_config_item("openai_api_key")
+                st.success("API Key 已重置!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"重置失败: {e}")
+
+    else:
+        st.subheader("Ollama 本地模型配置")
+
+        # Ollama 服务地址
+        ollama_url = st.text_input(
+            "Ollama 服务地址",
+            value=ollama_url_config.get("effective_value", "http://localhost:11434"),
+            placeholder="http://localhost:11434",
+            help="本地 Ollama 服务地址",
+        )
+
+        # Ollama 模型
+        ollama_model_config = configs.get("ollama_model", {})
+        ollama_model = st.text_input(
+            "模型名称",
+            value=ollama_model_config.get("effective_value", "llama2"),
+            placeholder="llama2, llama3, mistral 等",
+            help="本地 Ollama 模型名称",
+        )
+
+        if st.button("保存 Ollama 配置", type="primary"):
+            try:
+                batch_update_config({
+                    "ollama_base_url": ollama_url,
+                    "ollama_model": ollama_model,
+                })
+                st.success("配置已保存!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+
+
+def show_advanced_config():
+    """高级设置"""
+    try:
+        configs = fetch_config_items(category="advanced")
+    except Exception as e:
+        st.error(f"加载配置失败: {e}")
+        return
+
+    st.subheader("高级设置")
+
+    # Webhook URL
+    webhook_config = configs.get("webhook_url", {})
+    webhook_url = st.text_input(
+        "Webhook URL",
+        value=webhook_config.get("effective_value", ""),
+        placeholder="https://your-webhook-url",
+        help="通知推送地址",
+    )
+
+    # 日志文件
+    log_file_config = configs.get("log_file", {})
+    log_file = st.text_input(
+        "日志文件路径",
+        value=log_file_config.get("effective_value", ""),
+        placeholder="logs/app.log",
+        help="日志存储路径",
+    )
+
+    st.divider()
+    st.subheader("SMTP 邮件配置")
+
+    # SMTP 配置
+    smtp_host_config = configs.get("smtp_host", {})
+    smtp_host = st.text_input(
+        "SMTP 服务器",
+        value=smtp_host_config.get("effective_value", ""),
+        placeholder="smtp.example.com",
+    )
+
+    smtp_port_config = configs.get("smtp_port", {})
+    smtp_port = st.number_input(
+        "SMTP 端口",
+        value=int(smtp_port_config.get("effective_value", 586)) if smtp_port_config.get("effective_value") else 586,
+        min_value=1,
+        max_value=65535,
+    )
+
+    smtp_username_config = configs.get("smtp_username", {})
+    smtp_username = st.text_input(
+        "SMTP 用户名",
+        value=smtp_username_config.get("effective_value", ""),
+    )
+
+    smtp_password_config = configs.get("smtp_password", {})
+    smtp_password_status = smtp_password_config.get("effective_value", "")
+    if smtp_password_status:
+        st.success("SMTP 密码: 已配置")
+    else:
+        st.warning("SMTP 密码: 未配置")
+
+    smtp_password = st.text_input(
+        "SMTP 密码（填写则更新）",
+        value="",
+        type="password",
+        placeholder="输入新密码",
+    )
+
+    # 保存按钮
+    if st.button("保存高级设置", type="primary"):
+        try:
+            updates = {
+                "webhook_url": webhook_url,
+                "log_file": log_file,
+                "smtp_host": smtp_host,
+                "smtp_port": str(smtp_port),
+                "smtp_username": smtp_username,
+            }
+            if smtp_password:
+                updates["smtp_password"] = smtp_password
+
+            batch_update_config(updates)
+            st.success("配置已保存!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"保存失败: {e}")
 
 
 if __name__ == "__main__":

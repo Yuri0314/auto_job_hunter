@@ -53,6 +53,14 @@ class LiepinAdapter(BasePlatformAdapter):
         if not self._page or self._page.is_closed():
             await self.browser_manager.start()
             self._page = await self.browser_manager.new_page()
+
+            # 自动加载已保存的 Cookie
+            context = self.browser_manager._context
+            if context:
+                loaded = await self.cookie_manager.load_cookies(context, "liepin")
+                if loaded:
+                    logger.info("Auto-loaded saved cookies for Liepin")
+
         return self._page
 
     async def login(self, username: str, password: str) -> bool:
@@ -113,9 +121,43 @@ class LiepinAdapter(BasePlatformAdapter):
     async def check_login_status(self) -> bool:
         try:
             page = await self._get_page()
-            user_info = await page.query_selector(self.LOGIN_INDICATOR)
-            return user_info is not None
-        except Exception:
+
+            # 先访问首页，使用 domcontentloaded 避免 networkidle 无限等待
+            await page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2)
+
+            # 检查多个可能的登录指示器
+            login_indicators = [
+                ".user-info",  # 原有选择器
+                ".user-name",  # 新版可能的用户名选择器
+                ".header-user-info",  # header中的用户信息
+                "a[href*='/resume/']",  # 简历链接（登录后才可见）
+                ".so-signin-btn",  # 如果存在登录按钮说明未登录
+            ]
+
+            # 检查是否存在登录按钮（如果有说明未登录）
+            login_btn = await page.query_selector(".so-signin-btn")
+            if login_btn:
+                logger.info("Liepin: Login button found - not logged in")
+                return False
+
+            # 检查用户信息元素
+            for selector in login_indicators[:-1]:  # 排除登录按钮选择器
+                user_info = await page.query_selector(selector)
+                if user_info:
+                    logger.info(f"Liepin: Found login indicator '{selector}' - logged in")
+                    return True
+
+            # 尝试检查页面URL是否包含登录相关路径
+            current_url = page.url
+            if "login" in current_url.lower():
+                logger.info("Liepin: On login page - not logged in")
+                return False
+
+            logger.warning("Liepin: Could not determine login status, assuming logged in")
+            return True
+        except Exception as e:
+            logger.error(f"Liepin check_login_status error: {e}")
             return False
 
     async def search_jobs(
@@ -131,32 +173,71 @@ class LiepinAdapter(BasePlatformAdapter):
         try:
             page_obj = await self._get_page()
 
-            # 构建搜索URL
+            # 构建搜索URL - 猎聘新版URL格式
+            # 参考: https://www.liepin.com/zhaopin/?key=Python&city=北京
             url = f"{self.SEARCH_URL}?key={keywords}"
 
             if city:
+                # 猎聘城市参数可能需要城市编码，先尝试直接传城市名
                 url += f"&city={city}"
 
             if salary_range:
                 min_sal, max_sal = salary_range
+                # 猎聘薪资参数格式
                 url += f"&salary={min_sal}-{max_sal}"
 
             if experience:
                 url += f"&workYear={experience}"
 
-            url += f"&curPage={page}"
+            # 猎聘分页参数 - 使用正确的参数名
+            # 猎聘新版使用 pageNum 或 curPage，需要测试
+            if page > 1:
+                # 尝试两种分页参数格式
+                url += f"&curPage={page}"  # 原有格式
+                # 或者使用 pageNum
+                # url += f"&pageNum={page}"
 
-            await page_obj.goto(url)
-            await asyncio.sleep(2)
+            logger.info(f"Liepin: Navigating to search URL: {url}")
+            await page_obj.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
 
-            # 等待职位列表
-            await page_obj.wait_for_selector(".sojob-list", timeout=10000)
+            # 尝试多个可能的职位列表选择器
+            job_list_selectors = [
+                ".sojob-list",  # 原有选择器
+                ".job-list-box",  # 新版可能的选择器
+                ".left-list-box .sojob-list",  # 左侧列表区域
+                "div[data-selector='sojob-list']",  # data属性选择器
+            ]
+
+            job_list_found = False
+            for selector in job_list_selectors:
+                try:
+                    await page_obj.wait_for_selector(selector, timeout=10000)
+                    logger.info(f"Liepin: Found job list with selector: {selector}")
+                    job_list_found = True
+                    break
+                except Exception:
+                    logger.debug(f"Liepin: Selector '{selector}' not found, trying next...")
+                    continue
+
+            if not job_list_found:
+                logger.warning("Liepin: Could not find job list container, attempting direct parsing")
+                # 尝试直接解析页面内容
+                jobs = await self._parse_job_list_fallback(page_obj)
+                return SearchResult(
+                    jobs=jobs,
+                    total_count=len(jobs),
+                    page=page,
+                    page_size=page_size,
+                    has_more=False,
+                )
 
             jobs = await self._parse_job_list(page_obj)
+            logger.info(f"Liepin: Parsed {len(jobs)} jobs from page {page}")
 
-            # 检查是否有更多
-            next_btn = await page_obj.query_selector(".pagerbar a.next")
-            has_more = next_btn is not None
+            # 检查是否有更多 - 使用JavaScript检测更可靠
+            has_more = await self._check_has_more(page_obj)
+            logger.info(f"Liepin: Has more pages: {has_more}")
 
             return SearchResult(
                 jobs=jobs,
@@ -167,40 +248,101 @@ class LiepinAdapter(BasePlatformAdapter):
             )
 
         except Exception as e:
-            logger.error(f"Search jobs failed: {e}")
+            logger.error(f"Liepin search_jobs failed: {e}")
             return SearchResult(error=str(e))
 
     async def _parse_job_list(self, page: Page) -> List[JobInfo]:
         """解析职位列表"""
         jobs = []
 
-        items = await page.query_selector_all(".sojob-list .job-info")
+        # 尝试多个选择器组合
+        job_item_selectors = [
+            ".sojob-list .job-info",
+            ".sojob-list .sojob-item",
+            ".job-list-box .job-item",
+            ".left-list-box .sojob-item",
+        ]
+
+        items = []
+        for selector in job_item_selectors:
+            try:
+                items = await page.query_selector_all(selector)
+                if items:
+                    logger.info(f"Liepin: Found {len(items)} items with selector: {selector}")
+                    break
+            except Exception as e:
+                logger.debug(f"Liepin: Error with selector {selector}: {e}")
+                continue
+
+        if not items:
+            logger.warning("Liepin: No job items found with any selector")
+            return jobs
 
         for item in items:
             try:
-                # 提取职位ID
+                # 提取职位ID - 多种方式
+                job_id = ""
                 link = await item.query_selector("a[data-jobid]")
-                job_id = await link.get_attribute("data-jobid") if link else ""
+                if link:
+                    job_id = await link.get_attribute("data-jobid") or ""
+                else:
+                    # 尝试从链接href提取
+                    link = await item.query_selector("a[href*='/job/']")
+                    if link:
+                        href = await link.get_attribute("href") or ""
+                        # 从 /job/19123.shtml 提取ID
+                        match = re.search(r"/job/(\d+)", href)
+                        if match:
+                            job_id = match.group(1)
 
-                # 职位标题
-                title_el = await item.query_selector(".job-title")
-                title = await title_el.inner_text() if title_el else ""
+                # 职位标题 - 多个选择器
+                title_selectors = [".job-title", ".job-name", "a[data-jobid]", ".title"]
+                title = ""
+                for sel in title_selectors:
+                    title_el = await item.query_selector(sel)
+                    if title_el:
+                        title = await title_el.inner_text()
+                        if title:
+                            break
 
-                # 薪资
-                salary_el = await item.query_selector(".text-warning")
-                salary_text = await salary_el.inner_text() if salary_el else ""
+                # 薪资 - 多个选择器
+                salary_selectors = [".text-warning", ".salary", ".job-salary", ".item-warning"]
+                salary_text = ""
+                for sel in salary_selectors:
+                    salary_el = await item.query_selector(sel)
+                    if salary_el:
+                        salary_text = await salary_el.inner_text()
+                        if salary_text:
+                            break
                 salary_min, salary_max = self._parse_salary(salary_text)
 
-                # 公司
-                company_el = await item.query_selector(".company-name a")
-                company = await company_el.inner_text() if company_el else ""
+                # 公司 - 多个选择器
+                company_selectors = [".company-name a", ".company-name", ".cname a", ".company"]
+                company = ""
+                for sel in company_selectors:
+                    company_el = await item.query_selector(sel)
+                    if company_el:
+                        company = await company_el.inner_text()
+                        if company:
+                            break
 
-                # 城市
-                area_el = await item.query_selector(".area")
-                city = await area_el.inner_text() if area_el else ""
+                # 城市 - 多个选择器
+                city_selectors = [".area", ".city", ".location", ".work-city"]
+                city = ""
+                for sel in city_selectors:
+                    area_el = await item.query_selector(sel)
+                    if area_el:
+                        city = await area_el.inner_text()
+                        if city:
+                            break
+
+                # 构建URL
+                job_url = ""
+                if job_id:
+                    job_url = f"{self.BASE_URL}/job/{job_id}.shtml"
 
                 job = JobInfo(
-                    id=job_id,
+                    id=job_id or f"liepin-{hash(title + company)}",
                     title=title.strip(),
                     company=company.strip(),
                     salary=salary_text.strip(),
@@ -208,14 +350,136 @@ class LiepinAdapter(BasePlatformAdapter):
                     salary_max=salary_max,
                     city=city.strip(),
                     platform="liepin",
+                    url=job_url,
                 )
                 jobs.append(job)
 
             except Exception as e:
-                logger.debug(f"Parse job error: {e}")
+                logger.debug(f"Liepin parse job error: {e}")
                 continue
 
         return jobs
+
+    async def _parse_job_list_fallback(self, page: Page) -> List[JobInfo]:
+        """备用解析方法 - 直接从页面HTML解析"""
+        jobs = []
+        try:
+            # 获取页面内容并尝试解析
+            content = await page.content()
+            logger.debug(f"Liepin fallback: Page content length: {len(content)}")
+
+            # 使用JavaScript直接提取数据
+            job_data = await page.evaluate("""
+                () => {
+                    const jobs = [];
+                    // 尝试查找所有可能的职位卡片
+                    const cards = document.querySelectorAll('.sojob-item, .job-item, [class*="job"]');
+                    cards.forEach(card => {
+                        try {
+                            const titleEl = card.querySelector('[class*="title"], [class*="name"], a');
+                            const salaryEl = card.querySelector('[class*="salary"], [class*="warning"]');
+                            const companyEl = card.querySelector('[class*="company"], [class*="cname"]');
+                            const cityEl = card.querySelector('[class*="area"], [class*="city"]');
+
+                            if (titleEl && titleEl.innerText) {
+                                jobs.push({
+                                    title: titleEl.innerText.trim(),
+                                    salary: salaryEl ? salaryEl.innerText.trim() : '',
+                                    company: companyEl ? companyEl.innerText.trim() : '',
+                                    city: cityEl ? cityEl.innerText.trim() : ''
+                                });
+                            }
+                        } catch(e) {}
+                    });
+                    return jobs;
+                }
+            """)
+
+            for i, data in enumerate(job_data or []):
+                if data.get('title'):
+                    salary_min, salary_max = self._parse_salary(data.get('salary', ''))
+                    job = JobInfo(
+                        id=f"liepin-fallback-{i}",
+                        title=data.get('title', '').strip(),
+                        company=data.get('company', '').strip(),
+                        salary=data.get('salary', '').strip(),
+                        salary_min=salary_min,
+                        salary_max=salary_max,
+                        city=data.get('city', '').strip(),
+                        platform="liepin",
+                    )
+                    jobs.append(job)
+
+            logger.info(f"Liepin fallback: Found {len(jobs)} jobs via JavaScript extraction")
+
+        except Exception as e:
+            logger.error(f"Liepin fallback parsing error: {e}")
+
+        return jobs
+
+    async def _check_has_more(self, page: Page) -> bool:
+        """检查是否有更多页面"""
+        try:
+            # 使用JavaScript检测分页状态
+            has_more = await page.evaluate("""
+                () => {
+                    // 检查各种可能的分页元素
+                    const selectors = [
+                        '.pagerbar a.next',
+                        '.pagination a.next',
+                        'a[data-page="next"]',
+                        '.page-next',
+                        '.sojob-pager a.next',
+                        '.pager a.next',
+                        '[class*="next"]',
+                    ];
+
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el && !el.classList.contains('disabled') && !el.classList.contains('hide')) {
+                            // 检查是否是有效的下一页链接
+                            const href = el.getAttribute('href') || '';
+                            const text = el.innerText || '';
+                            if (text.includes('下一页') || text.includes('Next') || href.includes('curPage') || href.includes('pageNum')) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // 检查是否有总页数信息
+                    const totalPageEl = document.querySelector('.pagerbar .total, .pagination .total, [class*="total"]');
+                    if (totalPageEl) {
+                        const totalText = totalPageEl.innerText;
+                        const currentPage = document.querySelector('.pagerbar .current, .pagination .current, [class*="current"]');
+                        if (currentPage) {
+                            const currentNum = parseInt(currentPage.innerText) || 1;
+                            const match = totalText.match(/\\d+/);
+                            if (match) {
+                                const totalNum = parseInt(match[0]);
+                                return currentNum < totalNum;
+                            }
+                        }
+                    }
+
+                    // 检查是否还有职位卡片（如果有职位且没到最后一页）
+                    const jobCount = document.querySelectorAll('.sojob-item, .job-item, [class*="job-card"]').length;
+                    if (jobCount > 0) {
+                        // 简单假设有职位就可能有更多（保守策略）
+                        // 但要看是否有禁用的下一页按钮
+                        const disabledNext = document.querySelector('.pagerbar a.next.disabled, .pagination a.next.disabled');
+                        if (disabledNext) {
+                            return false;
+                        }
+                        return true;
+                    }
+
+                    return false;
+                }
+            """)
+            return bool(has_more)
+        except Exception as e:
+            logger.error(f"Liepin _check_has_more error: {e}")
+            return False
 
     async def get_job_detail(self, job_id: str) -> Optional[JobInfo]:
         """获取职位详情"""
