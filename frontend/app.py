@@ -238,8 +238,8 @@ def show_resume_parser():
     st.title("📄 简历解析")
 
     st.info("""
-    上传您的PDF简历，系统将自动提取关键信息并填充到用户画像。
-    解析成功后可以一键启动智能求职搜索。
+    上传或指定PDF简历文件，系统将自动提取关键信息。
+    解析成功后可一键启动智能求职搜索。
     """)
 
     # 获取当前简历状态
@@ -254,20 +254,37 @@ def show_resume_parser():
 
     st.divider()
 
-    # 解析方式选择
-    col1, col2 = st.columns(2)
+    # 文件选择：上传或输入路径
+    st.subheader("选择简历文件")
 
-    with col1:
-        st.subheader("方式一：上传PDF文件")
+    tab1, tab2 = st.tabs(["上传文件", "本地路径"])
+
+    with tab1:
         uploaded_file = st.file_uploader(
-            "选择PDF简历文件",
+            "选择PDF简历文件（支持拖拽）",
             type=["pdf"],
             key="resume_uploader",
         )
 
-        use_ai = st.checkbox("使用AI模式提取", value=False, help="AI模式更准确但需要配置API Key，规则模式更快且免费")
+    with tab2:
+        local_path = st.text_input(
+            "输入简历文件路径",
+            value=r"C:\Users\惠天宇\Documents\【简历】朱荣+27岁+3年工作经验+北京上海.pdf",
+            placeholder="例如：C:\Users\xxx\resume.pdf",
+            key="local_resume_path",
+        )
 
-        if uploaded_file and st.button("解析上传的简历", type="primary"):
+    # 解析选项
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        use_ai = st.checkbox("使用AI模式提取", value=False, help="AI模式更准确但需配置API Key，规则模式更快且免费")
+    with col2:
+        parse_btn = st.button("解析简历", type="primary", use_container_width=True)
+
+    # 执行解析
+    if parse_btn:
+        # 优先使用上传的文件
+        if uploaded_file:
             with st.spinner("正在解析简历..."):
                 try:
                     result = upload_resume_file(uploaded_file, use_ai=use_ai)
@@ -279,32 +296,20 @@ def show_resume_parser():
                         st.error(f"解析失败: {result.get('error', '未知错误')}")
                 except Exception as e:
                     st.error(f"解析失败: {str(e)}")
-
-    with col2:
-        st.subheader("方式二：指定本地文件路径")
-        local_path = st.text_input(
-            "简历文件路径",
-            value=r"C:\Users\惠天宇\Documents\【简历】朱荣+27岁+3年工作经验+北京上海.pdf",
-            key="local_resume_path",
-        )
-
-        use_ai_local = st.checkbox("使用AI模式提取", value=False, key="use_ai_local")
-
-        if st.button("解析本地简历", type="primary", key="parse_local"):
-            if local_path:
-                with st.spinner("正在解析简历..."):
-                    try:
-                        result = parse_resume_file(local_path, use_ai=use_ai_local)
-                        if result.get("success"):
-                            st.session_state["resume_result"] = result
-                            st.success("简历解析成功！")
-                            st.rerun()
-                        else:
-                            st.error(f"解析失败: {result.get('error', '未知错误')}")
-                    except Exception as e:
-                        st.error(f"解析失败: {str(e)}")
-            else:
-                st.warning("请输入简历文件路径")
+        elif local_path:
+            with st.spinner("正在解析简历..."):
+                try:
+                    result = parse_resume_file(local_path, use_ai=use_ai)
+                    if result.get("success"):
+                        st.session_state["resume_result"] = result
+                        st.success("简历解析成功！")
+                        st.rerun()
+                    else:
+                        st.error(f"解析失败: {result.get('error', '未知错误')}")
+                except Exception as e:
+                    st.error(f"解析失败: {str(e)}")
+        else:
+            st.warning("请上传文件或输入文件路径")
 
     # 显示解析结果
     if "resume_result" in st.session_state:
