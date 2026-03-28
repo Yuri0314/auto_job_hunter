@@ -236,7 +236,6 @@ async def one_click_job_search(
                 platforms=platforms,
                 keywords=keyword,
                 city=filter_config.get("cities", [None])[0],
-                salary_range=filter_config.get("salary_range"),
                 apply_filtered=request.auto_apply,
             )
             all_results.append(result)
