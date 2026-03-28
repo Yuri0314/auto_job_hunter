@@ -270,7 +270,7 @@ def show_resume_parser():
         local_path = st.text_input(
             "输入简历文件路径",
             value=r"C:\Users\惠天宇\Documents\【简历】朱荣+27岁+3年工作经验+北京上海.pdf",
-            placeholder="例如：C:\Users\xxx\resume.pdf",
+            placeholder=r"例如：C:\Users\xxx\resume.pdf",
             key="local_resume_path",
         )
 
