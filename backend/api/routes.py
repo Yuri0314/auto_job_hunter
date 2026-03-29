@@ -11,6 +11,7 @@ from .system import router as system_router
 from .settings import router as settings_router
 from .resume import router as resume_router
 from .search import router as search_router
+from .dashboard import router as dashboard_router
 
 api_router = APIRouter()
 
@@ -23,3 +24,4 @@ api_router.include_router(system_router, prefix="/system", tags=["System"])
 api_router.include_router(settings_router, prefix="/settings", tags=["Settings"])
 api_router.include_router(resume_router, prefix="/resume", tags=["Resume"])
 api_router.include_router(search_router, prefix="/search", tags=["Search"])
+api_router.include_router(dashboard_router, prefix="/dashboard", tags=["Dashboard"])

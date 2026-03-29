@@ -10,6 +10,7 @@ from .common import (
     render_loading_screen,
 )
 from .sidebar import render_sidebar, get_current_page, navigate_to, NAV_ITEMS
+from .dashboard import render_dashboard
 
 __all__ = [
     "COLORS",
@@ -25,4 +26,5 @@ __all__ = [
     "get_current_page",
     "navigate_to",
     "NAV_ITEMS",
+    "render_dashboard",
 ]
