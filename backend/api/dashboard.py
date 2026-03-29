@@ -43,16 +43,18 @@ async def get_dashboard_overview(user_id: int = 1):
         ).count()
 
         # 最近投递
-        recent_apps = db.query(Application).join(Job).order_by(
-            Application.created_at.desc()
-        ).limit(5).all()
+        recent_apps = db.query(Application).filter(
+            Application.created_at >= today_start
+        ).order_by(Application.created_at.desc()).limit(5).all()
 
         recent = []
         for app in recent_apps:
+            # 获取关联的职位信息
+            job = db.query(Job).filter(Job.id == app.job_id).first()
             recent.append({
                 "id": app.id,
-                "job_title": app.job.title if app.job else None,
-                "company": app.job.company if app.job else None,
+                "job_title": job.title if job else None,
+                "company": job.company if job else None,
                 "status": app.status.value if app.status else "pending",
                 "created_at": app.created_at.isoformat() if app.created_at else None,
             })
