@@ -1,6 +1,7 @@
 """简历解析API路由"""
 
 from typing import Optional, List
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -12,6 +13,8 @@ from loguru import logger
 
 router = APIRouter()
 
+
+# ========== Pydantic 模型 ==========
 
 class ParseResultResponse(BaseModel):
     """解析结果响应"""
@@ -42,6 +45,46 @@ class OneClickJobResponse(BaseModel):
     total_found: int = 0
     total_applied: int = 0
     error: Optional[str] = None
+
+
+class ResumeCreate(BaseModel):
+    """创建简历请求"""
+    name: str
+    file_type: str = "pdf"
+
+
+class ResumeUpdate(BaseModel):
+    """更新简历请求"""
+    name: Optional[str] = None
+    is_primary: Optional[bool] = None
+
+
+class ResumeProfileUpdate(BaseModel):
+    """更新简历画像请求"""
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    experience_years: Optional[int] = None
+    current_position: Optional[str] = None
+    target_positions: Optional[List[str]] = None
+    preferred_cities: Optional[List[str]] = None
+    salary_min: Optional[int] = None
+    salary_max: Optional[int] = None
+    education: Optional[str] = None
+    school: Optional[str] = None
+    major: Optional[str] = None
+    skills: Optional[List[str]] = None
+
+
+class ResumeResponse(BaseModel):
+    """简历响应"""
+    id: int
+    name: str
+    file_type: str
+    parse_engine: str
+    is_primary: bool
+    created_at: datetime
+    profile: Optional[dict] = None
 
 
 @router.post("/upload", response_model=ParseResultResponse)
@@ -290,3 +333,147 @@ async def one_click_job_search(
             success=False,
             error=str(e),
         )
+
+
+# ========== 简历管理 API ==========
+
+@router.get("/list")
+async def list_resumes(
+    user_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    """获取简历列表"""
+    from backend.core.database import Resume, ResumeProfile
+
+    resumes = db.query(Resume).filter(Resume.user_id == user_id).all()
+
+    result = []
+    for resume in resumes:
+        profile = db.query(ResumeProfile).filter(
+            ResumeProfile.resume_id == resume.id
+        ).first()
+
+        result.append({
+            "id": resume.id,
+            "name": resume.name,
+            "file_type": resume.file_type,
+            "parse_engine": resume.parse_engine,
+            "is_primary": resume.is_primary,
+            "created_at": resume.created_at.isoformat() if resume.created_at else None,
+            "profile": {
+                "name": profile.name,
+                "experience_years": profile.experience_years,
+                "current_position": profile.current_position,
+                "skills": profile.skills,
+            } if profile else None,
+        })
+
+    return {"items": result, "total": len(result)}
+
+
+@router.post("/create", response_model=ResumeResponse)
+async def create_resume(
+    request: ResumeCreate,
+    user_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    """创建新简历记录"""
+    from backend.core.database import Resume
+
+    resume = Resume(
+        user_id=user_id,
+        name=request.name,
+        file_type=request.file_type,
+    )
+    db.add(resume)
+    db.commit()
+    db.refresh(resume)
+
+    return ResumeResponse(
+        id=resume.id,
+        name=resume.name,
+        file_type=resume.file_type,
+        parse_engine=resume.parse_engine,
+        is_primary=resume.is_primary,
+        created_at=resume.created_at,
+    )
+
+
+@router.put("/{resume_id}/profile")
+async def update_resume_profile(
+    resume_id: int,
+    request: ResumeProfileUpdate,
+    db: Session = Depends(get_db),
+):
+    """更新简历画像"""
+    from backend.core.database import Resume, ResumeProfile
+
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(404, "简历不存在")
+
+    profile = db.query(ResumeProfile).filter(
+        ResumeProfile.resume_id == resume_id
+    ).first()
+
+    if not profile:
+        profile = ResumeProfile(resume_id=resume_id)
+        db.add(profile)
+
+    # 更新字段
+    update_data = request.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(profile, field, value)
+
+    db.commit()
+
+    return {"success": True, "message": "简历画像已更新"}
+
+
+@router.delete("/{resume_id}")
+async def delete_resume(
+    resume_id: int,
+    db: Session = Depends(get_db),
+):
+    """删除简历"""
+    from backend.core.database import Resume
+
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(404, "简历不存在")
+
+    db.delete(resume)
+    db.commit()
+
+    return {"success": True, "message": "简历已删除"}
+
+
+@router.post("/{resume_id}/set-primary")
+async def set_primary_resume(
+    resume_id: int,
+    user_id: int = 1,
+    db: Session = Depends(get_db),
+):
+    """设置主简历"""
+    from backend.core.database import Resume, UserProfile
+
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(404, "简历不存在")
+
+    # 清除其他主简历
+    db.query(Resume).filter(
+        Resume.user_id == user_id
+    ).update({"is_primary": False})
+
+    # 设置当前为主简历
+    resume.is_primary = True
+
+    # 更新用户画像
+    profile = db.query(UserProfile).filter(UserProfile.id == user_id).first()
+    if profile:
+        profile.primary_resume_id = resume_id
+
+    db.commit()
+
+    return {"success": True, "message": f"已将 {resume.name} 设为主简历"}
