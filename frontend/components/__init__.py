@@ -9,6 +9,7 @@ from .common import (
     render_job_item,
     render_loading_screen,
 )
+from .sidebar import render_sidebar, get_current_page, navigate_to, NAV_ITEMS
 
 __all__ = [
     "COLORS",
@@ -20,4 +21,8 @@ __all__ = [
     "render_action_button",
     "render_job_item",
     "render_loading_screen",
+    "render_sidebar",
+    "get_current_page",
+    "navigate_to",
+    "NAV_ITEMS",
 ]
