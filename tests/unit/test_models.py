@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime
+import uuid
 
 from backend.core.database import (
     SessionLocal,
@@ -22,6 +23,15 @@ def db_session():
     Base.metadata.create_all(bind=engine)
     session = SessionLocal()
     yield session
+    # 清理测试数据
+    session.rollback()
+    session.query(Application).delete()
+    session.query(Job).delete()
+    session.query(SearchStrategy).delete()
+    session.query(ResumeProfile).delete()
+    session.query(Resume).delete()
+    session.query(UserProfile).filter(UserProfile.id >= 900).delete()  # 只删除测试用户
+    session.commit()
     session.close()
 
 
@@ -118,8 +128,9 @@ class TestJobModelExtension:
 
     def test_job_pool_status(self, db_session):
         """测试职位池状态字段"""
+        unique_job_id = f"test_job_{uuid.uuid4().hex[:8]}"
         job = Job(
-            job_id="test_job_001",
+            job_id=unique_job_id,
             platform="boss",
             title="Python工程师",
             company="测试公司",
@@ -129,7 +140,7 @@ class TestJobModelExtension:
         db_session.commit()
 
         saved_job = db_session.query(Job).filter(
-            Job.job_id == "test_job_001"
+            Job.job_id == unique_job_id
         ).first()
         assert saved_job.pool_status == "starred"
 
@@ -160,8 +171,10 @@ class TestUserProfileExtension:
 
     def test_user_run_mode(self, db_session):
         """测试运行模式字段"""
+        # 使用随机 ID 避免冲突
+        unique_id = 900 + int(uuid.uuid4().hex[:4], 16) % 1000
         profile = UserProfile(
-            id=999,
+            id=unique_id,
             name="测试用户",
             run_mode="ai_assisted",
         )
@@ -169,6 +182,6 @@ class TestUserProfileExtension:
         db_session.commit()
 
         saved_profile = db_session.query(UserProfile).filter(
-            UserProfile.id == 999
+            UserProfile.id == unique_id
         ).first()
         assert saved_profile.run_mode == "ai_assisted"
