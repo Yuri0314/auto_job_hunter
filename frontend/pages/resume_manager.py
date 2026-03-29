@@ -299,6 +299,19 @@ def get_resume_detail(resume_id):
         return None
 
 
+def update_resume_profile(resume_id, profile_data):
+    """更新简历画像"""
+    try:
+        r = requests.put(
+            f"{API_BASE}/resume/{resume_id}/profile",
+            json=profile_data,
+            timeout=10
+        )
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # ========== Session State Keys ==========
 
 RESUME_LIST_KEY = "_resume_manager_list"
@@ -367,11 +380,23 @@ def render_resume_list():
             <div style="font-size: 0.85rem; margin-top: 0.5rem;">上传或粘贴简历开始使用</div>
         </div>
         """, unsafe_allow_html=True)
+        # 即使没有简历，也要处理模态框状态（防止残留）
+        if st.session_state.get("_edit_resume_id") or st.session_state.get("_view_resume_id"):
+            st.session_state._edit_resume_id = None
+            st.session_state._view_resume_id = None
         return
 
     # 显示简历卡片
     for resume in resumes:
         render_resume_card(resume)
+
+    # 显示编辑模态框
+    if st.session_state.get("_edit_resume_id"):
+        render_resume_detail_modal(st.session_state._edit_resume_id, readonly=False)
+
+    # 显示详情模态框
+    if st.session_state.get("_view_resume_id"):
+        render_resume_detail_modal(st.session_state._view_resume_id, readonly=True)
 
 
 def render_resume_card(resume):
@@ -444,10 +469,7 @@ def render_resume_card(resume):
 
     with col1:
         if st.button("查看详情", key=f"detail_{resume_id}", use_container_width=True):
-            st.session_state[RESUME_DETAIL_KEY] = resume_id
-            st.session_state[RESUME_LOADING_KEY] = True
-            st.session_state["_resume_loading_message"] = "加载详情..."
-            st.session_state["_resume_action_type"] = "load_detail"
+            st.session_state._view_resume_id = resume_id
             st.rerun()
 
     with col2:
@@ -461,8 +483,7 @@ def render_resume_card(resume):
 
     with col3:
         if st.button("编辑", key=f"edit_{resume_id}", use_container_width=True):
-            st.session_state[RESUME_DETAIL_KEY] = resume_id
-            st.session_state["_resume_edit_mode"] = True
+            st.session_state._edit_resume_id = resume_id
             st.rerun()
 
     with col4:
@@ -561,12 +582,21 @@ def render_paste_section():
             st.rerun()
 
 
-def render_resume_detail_modal(resume_id):
-    """渲染简历详情模态框"""
+def render_resume_detail_modal(resume_id: int, readonly: bool = False):
+    """渲染简历详情模态框
+
+    Args:
+        resume_id: 简历ID
+        readonly: 是否只读模式（只读模式下禁用编辑）
+    """
     detail = get_resume_detail(resume_id)
 
     if not detail:
         st.error("加载详情失败")
+        if st.button("关闭", key=f"close_error_{resume_id}"):
+            st.session_state._edit_resume_id = None
+            st.session_state._view_resume_id = None
+            st.rerun()
         return
 
     st.markdown("""
@@ -583,40 +613,122 @@ def render_resume_detail_modal(resume_id):
     st.markdown("**基本信息**")
     col1, col2 = st.columns(2)
     with col1:
-        st.text_input("姓名", value=profile.get("name", ""), key=f"edit_name_{resume_id}")
-        st.text_input("电话", value=profile.get("phone", ""), key=f"edit_phone_{resume_id}")
+        name_val = profile.get("name", "")
+        phone_val = profile.get("phone", "")
+        if readonly:
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>姓名</div><div class='resume-info-value'>{name_val or '-'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>电话</div><div class='resume-info-value'>{phone_val or '-'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.text_input("姓名", value=name_val, key=f"edit_name_{resume_id}")
+            st.text_input("电话", value=phone_val, key=f"edit_phone_{resume_id}")
     with col2:
-        st.text_input("邮箱", value=profile.get("email", ""), key=f"edit_email_{resume_id}")
-        st.text_input("年龄", value=str(profile.get("age", "")), key=f"edit_age_{resume_id}")
+        email_val = profile.get("email", "")
+        age_val = profile.get("age", "")
+        if readonly:
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>邮箱</div><div class='resume-info-value'>{email_val or '-'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>年龄</div><div class='resume-info-value'>{age_val or '-'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.text_input("邮箱", value=email_val, key=f"edit_email_{resume_id}")
+            st.text_input("年龄", value=str(age_val) if age_val else "", key=f"edit_age_{resume_id}")
 
     # 工作信息
     st.markdown("**工作信息**")
     col3, col4 = st.columns(2)
     with col3:
-        st.text_input("当前职位", value=profile.get("current_position", ""), key=f"edit_position_{resume_id}")
-        st.text_input("当前公司", value=profile.get("current_company", ""), key=f"edit_company_{resume_id}")
+        position_val = profile.get("current_position", "")
+        company_val = profile.get("current_company", "")
+        if readonly:
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>当前职位</div><div class='resume-info-value'>{position_val or '-'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>当前公司</div><div class='resume-info-value'>{company_val or '-'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.text_input("当前职位", value=position_val, key=f"edit_position_{resume_id}")
+            st.text_input("当前公司", value=company_val, key=f"edit_company_{resume_id}")
     with col4:
-        st.number_input("工作年限", value=profile.get("experience_years", 0), min_value=0, key=f"edit_exp_{resume_id}")
-        st.text_input("期望薪资范围", value=f"{profile.get('salary_min', '')}-{profile.get('salary_max', '')}", key=f"edit_salary_{resume_id}")
+        exp_val = profile.get("experience_years", 0)
+        salary_min = profile.get("salary_min", "")
+        salary_max = profile.get("salary_max", "")
+        salary_range = f"{salary_min}-{salary_max}" if salary_min and salary_max else ""
+        if readonly:
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>工作年限</div><div class='resume-info-value'>{exp_val}年</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>期望薪资</div><div class='resume-info-value'>{salary_range or '-'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.number_input("工作年限", value=exp_val, min_value=0, key=f"edit_exp_{resume_id}")
+            st.text_input("期望薪资范围", value=salary_range, key=f"edit_salary_{resume_id}")
 
     # 教育信息
     st.markdown("**教育背景**")
     col5, col6 = st.columns(2)
     with col5:
-        st.text_input("学历", value=profile.get("education", ""), key=f"edit_edu_{resume_id}")
-        st.text_input("专业", value=profile.get("major", ""), key=f"edit_major_{resume_id}")
+        edu_val = profile.get("education", "")
+        major_val = profile.get("major", "")
+        if readonly:
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>学历</div><div class='resume-info-value'>{edu_val or '-'}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>专业</div><div class='resume-info-value'>{major_val or '-'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.text_input("学历", value=edu_val, key=f"edit_edu_{resume_id}")
+            st.text_input("专业", value=major_val, key=f"edit_major_{resume_id}")
     with col6:
-        st.text_input("学校", value=profile.get("school", ""), key=f"edit_school_{resume_id}")
+        school_val = profile.get("school", "")
+        if readonly:
+            st.markdown(f"<div class='resume-info-item'><div class='resume-info-label'>学校</div><div class='resume-info-value'>{school_val or '-'}</div></div>", unsafe_allow_html=True)
+        else:
+            st.text_input("学校", value=school_val, key=f"edit_school_{resume_id}")
+
+    # 技能展示
+    skills = profile.get("skills", [])
+    if skills:
+        skills_html = "".join([f"<span class='skill-tag'>{s}</span>" for s in skills[:10]])
+        st.markdown(f"""
+        <div style="margin-top: 1rem;">
+            <div class='resume-info-label'>技能标签</div>
+            <div class="skill-tags">{skills_html}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 保存按钮
-    if st.button("保存修改", type="primary", use_container_width=True):
-        st.session_state[RESUME_LOADING_KEY] = True
-        st.session_state["_resume_loading_message"] = "保存中..."
-        st.session_state["_resume_action_type"] = "save_profile"
-        st.session_state["_resume_action_id"] = resume_id
-        st.rerun()
+    # 操作按钮
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if not readonly:
+            if st.button("保存修改", type="primary", use_container_width=True, key=f"save_{resume_id}"):
+                # 收集表单数据
+                profile_data = {
+                    "name": st.session_state.get(f"edit_name_{resume_id}", ""),
+                    "phone": st.session_state.get(f"edit_phone_{resume_id}", ""),
+                    "email": st.session_state.get(f"edit_email_{resume_id}", ""),
+                    "age": int(st.session_state.get(f"edit_age_{resume_id}", 0) or 0),
+                    "current_position": st.session_state.get(f"edit_position_{resume_id}", ""),
+                    "current_company": st.session_state.get(f"edit_company_{resume_id}", ""),
+                    "experience_years": st.session_state.get(f"edit_exp_{resume_id}", 0),
+                    "education": st.session_state.get(f"edit_edu_{resume_id}", ""),
+                    "school": st.session_state.get(f"edit_school_{resume_id}", ""),
+                    "major": st.session_state.get(f"edit_major_{resume_id}", ""),
+                }
+                # 解析薪资
+                salary_str = st.session_state.get(f"edit_salary_{resume_id}", "")
+                if salary_str and "-" in salary_str:
+                    parts = salary_str.split("-")
+                    try:
+                        profile_data["salary_min"] = int(parts[0].strip())
+                        profile_data["salary_max"] = int(parts[1].strip())
+                    except ValueError:
+                        pass
+
+                result = update_resume_profile(resume_id, profile_data)
+                if result.get("success"):
+                    st.success("保存成功！")
+                    st.session_state._edit_resume_id = None
+                    st.session_state[RESUME_LIST_KEY] = None  # 清除列表缓存
+                    st.rerun()
+                else:
+                    st.error(f"保存失败: {result.get('error', '未知错误')}")
+
+    with col_btn2:
+        if st.button("关闭", use_container_width=True, key=f"close_{resume_id}"):
+            st.session_state._edit_resume_id = None
+            st.session_state._view_resume_id = None
+            st.rerun()
 
 
 def show_loading_screen(message="处理中..."):
@@ -696,11 +808,6 @@ def execute_pending_action():
         else:
             st.session_state["_resume_action_message"] = ("error", result.get("error", "删除失败"))
 
-    elif action_type == "load_detail":
-        resume_id = st.session_state.get(RESUME_DETAIL_KEY)
-        # 详情已在 loading 后渲染
-        st.session_state["_resume_show_detail"] = True
-
     # 清除状态
     st.session_state[RESUME_LOADING_KEY] = False
     st.session_state["_resume_loading_message"] = ""
@@ -740,6 +847,10 @@ def init_session_state():
         st.session_state[RESUME_LOADING_KEY] = False
     if RESUME_DETAIL_KEY not in st.session_state:
         st.session_state[RESUME_DETAIL_KEY] = None
+    if "_edit_resume_id" not in st.session_state:
+        st.session_state._edit_resume_id = None
+    if "_view_resume_id" not in st.session_state:
+        st.session_state._view_resume_id = None
 
 
 # ========== 主入口 ==========
@@ -758,16 +869,6 @@ def main():
         else:
             st.error(msg_text)
         st.session_state["_resume_action_message"] = None
-
-    # 显示详情模态框
-    if st.session_state.get("_resume_show_detail"):
-        resume_id = st.session_state.get(RESUME_DETAIL_KEY)
-        if resume_id:
-            render_resume_detail_modal(resume_id)
-            if st.button("关闭详情", key="close_detail"):
-                st.session_state["_resume_show_detail"] = False
-                st.session_state[RESUME_DETAIL_KEY] = None
-                st.rerun()
 
 
 if __name__ == "__main__":
