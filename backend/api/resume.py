@@ -136,6 +136,34 @@ async def get_resume_status(
         raise HTTPException(500, str(e))
 
 
+@router.get("/download")
+async def download_resume(
+    user_id: int = 1,
+):
+    """下载简历文件"""
+    from fastapi.responses import FileResponse
+    import os
+
+    try:
+        service = get_resume_service()
+        status = service.get_resume_status(user_id)
+
+        file_path = status.get("resume_file")
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(404, "简历文件不存在")
+
+        return FileResponse(
+            path=file_path,
+            filename="resume.pdf",
+            media_type="application/pdf",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Download resume error: {e}")
+        raise HTTPException(500, str(e))
+
+
 @router.put("/confirm")
 async def confirm_resume_result(
     request: ConfirmResumeRequest,
