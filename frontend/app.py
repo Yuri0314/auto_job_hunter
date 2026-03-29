@@ -438,7 +438,7 @@ st.markdown("""
 # ========== Session State ==========
 
 if "step" not in st.session_state:
-    st.session_state.step = 1  # 1:简历, 2:搜索, 3:投递结果, 4:设置, 5:投递记录
+    st.session_state.step = 1  # 1:简历, 2:搜索, 3:投递结果, 4:设置, 5:投递记录, 6:简历管理
 if "resume_parsed" not in st.session_state:
     st.session_state.resume_parsed = False
 if "resume_data" not in st.session_state:
@@ -1331,10 +1331,17 @@ else:
         step_settings()
     elif step == 5:
         step_history()
+    elif step == 6:
+        # 返回按钮
+        if st.button("← 返回主流程", type="secondary"):
+            st.session_state.step = 1
+            st.rerun()
+        from frontend.pages.resume_manager import render_resume_manager
+        render_resume_manager()
 
     # ========== 底部导航 ==========
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         if st.button("📊 投递记录", use_container_width=True):
             st.session_state._history_pending = True
@@ -1343,10 +1350,14 @@ else:
             st.session_state.step = 5
             st.rerun()
     with col2:
+        if st.button("📄 管理简历", use_container_width=True):
+            st.session_state.step = 6
+            st.rerun()
+    with col3:
         if st.button("🏠 返回首页", use_container_width=True):
             st.session_state.step = 1
             st.rerun()
-    with col3:
+    with col4:
         if st.button("⚙️ 设置", use_container_width=True):
             st.session_state._settings_pending = True
             st.session_state.loading = True
