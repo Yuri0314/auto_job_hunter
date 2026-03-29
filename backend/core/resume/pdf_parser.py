@@ -1,13 +1,17 @@
 """PDF简历解析器"""
 
 import re
-from typing import Optional
 from pathlib import Path
+from typing import Dict, Any
 from loguru import logger
 
+from backend.core.resume.parser_base import BaseParser
 
-class PDFParser:
+
+class PDFParser(BaseParser):
     """PDF简历文本提取器"""
+
+    SUPPORTED_EXTENSIONS = [".pdf"]
 
     def __init__(self):
         self._pdfplumber = None
@@ -17,11 +21,10 @@ class PDFParser:
         if self._pdfplumber is None:
             try:
                 import pdfplumber
+
                 self._pdfplumber = pdfplumber
             except ImportError:
-                raise ImportError(
-                    "pdfplumber未安装，请运行: pip install pdfplumber"
-                )
+                raise ImportError("pdfplumber未安装，请运行: pip install pdfplumber")
         return self._pdfplumber
 
     def extract_text(self, file_path: str) -> str:
