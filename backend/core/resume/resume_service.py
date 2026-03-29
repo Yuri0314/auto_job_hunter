@@ -1,278 +1,464 @@
 """简历解析服务 - 协调层"""
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from datetime import datetime
 from loguru import logger
 
-from backend.core.resume.pdf_parser import PDFParser
-from backend.core.resume.rule_extractor import RuleExtractor
-from backend.core.database import SessionLocal, UserProfile
+from backend.core.database import (
+    SessionLocal,
+    Resume,
+    ResumeProfile,
+    SearchStrategy,
+    UserProfile,
+)
+from .parser_base import TextParser
+from .pdf_parser import PDFParser
+from .docx_parser import DocxParser
+from .md_parser import MarkdownParser
+from .txt_parser import TxtParser
+from .rule_extractor import RuleExtractor
+from .ai_extractor import AIExtractor, get_ai_extractor
+from .strategy_generator import StrategyGenerator, get_strategy_generator
 
 
 class ResumeService:
     """简历解析服务"""
 
+    # 文件类型映射
+    FILE_TYPE_PARSERS = {
+        "pdf": PDFParser,
+        "docx": DocxParser,
+        "md": MarkdownParser,
+        "txt": TxtParser,
+        "paste": TextParser,
+    }
+
     def __init__(self):
-        self.pdf_parser = PDFParser()
-        self.rule_extractor = RuleExtractor()
-        self._ai_service = None
+        self._rule_extractor = RuleExtractor()
+        self._ai_extractor: Optional[AIExtractor] = None
+        self._strategy_generator: Optional[StrategyGenerator] = None
 
     @property
-    def ai_service(self):
-        """懒加载AI服务"""
-        if self._ai_service is None:
-            try:
-                from backend.agents.ai import get_ai_service
-                self._ai_service = get_ai_service()
-            except Exception as e:
-                logger.warning(f"AI服务加载失败: {e}")
-        return self._ai_service
+    def ai_extractor(self) -> AIExtractor:
+        """懒加载AI提取器"""
+        if self._ai_extractor is None:
+            self._ai_extractor = get_ai_extractor()
+        return self._ai_extractor
 
+    @property
+    def strategy_generator(self) -> StrategyGenerator:
+        """懒加载策略生成器"""
+        if self._strategy_generator is None:
+            self._strategy_generator = get_strategy_generator()
+        return self._strategy_generator
+
+    def get_parser(self, file_type: str):
+        """获取解析器"""
+        parser_class = self.FILE_TYPE_PARSERS.get(file_type)
+        if not parser_class:
+            raise ValueError(f"不支持的文件类型: {file_type}")
+        return parser_class()
+
+    async def parse_resume(
+        self,
+        file_path: str,
+        file_type: str = "pdf",
+        user_id: int = 1,
+        use_ai: bool = False,
+        resume_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        解析简历文件
+
+        Args:
+            file_path: 文件路径（或粘贴的文本，当file_type="paste"时）
+            file_type: 文件类型 (pdf/docx/md/txt/paste)
+            user_id: 用户ID
+            use_ai: 是否使用AI模式
+            resume_name: 简历名称（可选）
+
+        Returns:
+            {
+                "success": bool,
+                "resume_id": int,
+                "profile_id": int,
+                "extracted_data": dict,
+                "search_strategy": dict,
+                "error": str (if failed)
+            }
+        """
+        try:
+            logger.info(f"开始解析简历: file_type={file_type}, use_ai={use_ai}")
+
+            # 1. 提取文本
+            parser = self.get_parser(file_type)
+
+            if file_type == "paste":
+                parse_result = parser.parse_text(file_path)
+            else:
+                parse_result = parser.parse(file_path)
+
+            if not parse_result.get("success"):
+                return parse_result
+
+            text = parse_result["text"]
+
+            # 2. 信息提取
+            if use_ai:
+                extracted_data = await self._extract_with_ai(text)
+            else:
+                extracted_data = self._rule_extractor.extract(text)
+
+            # 3. 保存到数据库
+            resume, profile = self._save_to_database(
+                user_id=user_id,
+                file_path=file_path if file_type != "paste" else None,
+                file_type=file_type,
+                parse_engine="ai" if use_ai else "rule",
+                extracted_data=extracted_data,
+                raw_text=text,
+                resume_name=resume_name,
+            )
+
+            # 4. 生成搜索策略
+            strategy = self._generate_and_save_strategy(
+                resume_id=resume.id,
+                profile_data=extracted_data,
+                use_ai=use_ai,
+            )
+
+            logger.info(f"简历解析成功: resume_id={resume.id}")
+
+            return {
+                "success": True,
+                "resume_id": resume.id,
+                "profile_id": profile.id,
+                "extracted_data": extracted_data,
+                "search_strategy": strategy,
+                "file_type": file_type,
+            }
+
+        except Exception as e:
+            logger.error(f"简历解析失败: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _extract_with_ai(self, text: str) -> Dict[str, Any]:
+        """使用AI提取简历信息"""
+        if not self.ai_extractor.ai_service:
+            logger.warning("AI服务不可用，回退到规则模式")
+            return self._rule_extractor.extract(text)
+
+        try:
+            ai_result = await self.ai_extractor.extract(text)
+
+            # 合并规则提取结果（作为补充）
+            rule_result = self._rule_extractor.extract(text)
+
+            # AI结果优先，规则结果补充
+            merged = rule_result.copy()
+            for key, value in ai_result.items():
+                if value is not None:
+                    merged[key] = value
+
+            return merged
+
+        except Exception as e:
+            logger.error(f"AI提取失败: {e}，回退到规则模式")
+            return self._rule_extractor.extract(text)
+
+    def _save_to_database(
+        self,
+        user_id: int,
+        file_path: Optional[str],
+        file_type: str,
+        parse_engine: str,
+        extracted_data: Dict[str, Any],
+        raw_text: str,
+        resume_name: Optional[str] = None,
+    ) -> tuple:
+        """保存简历到数据库"""
+        db = SessionLocal()
+        try:
+            # 创建简历记录
+            name = resume_name or extracted_data.get("name", "未命名简历")
+            if file_path and not resume_name:
+                from pathlib import Path
+                name = Path(file_path).stem
+
+            resume = Resume(
+                user_id=user_id,
+                name=name,
+                file_path=file_path,
+                file_type=file_type,
+                parse_engine=parse_engine,
+                is_primary=False,
+            )
+            db.add(resume)
+            db.flush()  # 获取ID
+
+            # 创建简历画像
+            profile = ResumeProfile(
+                resume_id=resume.id,
+                name=extracted_data.get("name"),
+                phone=extracted_data.get("phone"),
+                email=extracted_data.get("email"),
+                gender=extracted_data.get("gender"),
+                age=extracted_data.get("age"),
+                experience_years=extracted_data.get("experience_years"),
+                current_position=extracted_data.get("current_position"),
+                current_company=extracted_data.get("current_company"),
+                target_positions=extracted_data.get("target_positions"),
+                preferred_cities=extracted_data.get("target_cities") or extracted_data.get("preferred_cities"),
+                salary_min=extracted_data.get("expected_salary_min") or extracted_data.get("salary_min"),
+                salary_max=extracted_data.get("expected_salary_max") or extracted_data.get("salary_max"),
+                education=extracted_data.get("education"),
+                school=extracted_data.get("school"),
+                major=extracted_data.get("major"),
+                skills=extracted_data.get("skills"),
+                work_experiences=extracted_data.get("work_experiences"),
+                raw_text=raw_text[:10000] if raw_text else None,  # 限制长度
+            )
+            db.add(profile)
+            db.commit()
+
+            return resume, profile
+
+        except Exception as e:
+            logger.error(f"保存简历失败: {e}")
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def _generate_and_save_strategy(
+        self,
+        resume_id: int,
+        profile_data: Dict[str, Any],
+        use_ai: bool = False,
+    ) -> Dict[str, Any]:
+        """生成并保存搜索策略"""
+        strategy_data = self.strategy_generator.generate(profile_data, use_ai=use_ai)
+
+        db = SessionLocal()
+        try:
+            strategy = SearchStrategy(
+                resume_id=resume_id,
+                primary_keywords=strategy_data.get("primary_keywords", []),
+                variant_keywords=strategy_data.get("variant_keywords", []),
+                skill_combinations=strategy_data.get("skill_combinations", []),
+                cities=strategy_data.get("cities", []),
+                salary_min=strategy_data.get("salary_min"),
+                salary_max=strategy_data.get("salary_max"),
+            )
+            db.add(strategy)
+            db.commit()
+
+            strategy_data["strategy_id"] = strategy.id
+
+        except Exception as e:
+            logger.warning(f"保存搜索策略失败: {e}")
+        finally:
+            db.close()
+
+        return strategy_data
+
+    def get_resume_list(self, user_id: int = 1) -> List[Dict[str, Any]]:
+        """获取用户的简历列表"""
+        db = SessionLocal()
+        try:
+            resumes = db.query(Resume).filter(
+                Resume.user_id == user_id
+            ).order_by(Resume.updated_at.desc()).all()
+
+            result = []
+            for resume in resumes:
+                profile = db.query(ResumeProfile).filter(
+                    ResumeProfile.resume_id == resume.id
+                ).first()
+
+                result.append({
+                    "id": resume.id,
+                    "name": resume.name,
+                    "file_type": resume.file_type,
+                    "parse_engine": resume.parse_engine,
+                    "is_primary": resume.is_primary,
+                    "created_at": resume.created_at.isoformat() if resume.created_at else None,
+                    "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
+                    "profile": {
+                        "name": profile.name if profile else None,
+                        "experience_years": profile.experience_years if profile else None,
+                        "current_position": profile.current_position if profile else None,
+                        "skills": profile.skills if profile else [],
+                    } if profile else None,
+                })
+
+            return result
+
+        finally:
+            db.close()
+
+    def get_resume_detail(self, resume_id: int) -> Optional[Dict[str, Any]]:
+        """获取简历详情"""
+        db = SessionLocal()
+        try:
+            resume = db.query(Resume).filter(Resume.id == resume_id).first()
+            if not resume:
+                return None
+
+            profile = db.query(ResumeProfile).filter(
+                ResumeProfile.resume_id == resume_id
+            ).first()
+
+            strategy = db.query(SearchStrategy).filter(
+                SearchStrategy.resume_id == resume_id
+            ).first()
+
+            return {
+                "id": resume.id,
+                "name": resume.name,
+                "file_type": resume.file_type,
+                "file_path": resume.file_path,
+                "parse_engine": resume.parse_engine,
+                "is_primary": resume.is_primary,
+                "created_at": resume.created_at.isoformat() if resume.created_at else None,
+                "updated_at": resume.updated_at.isoformat() if resume.updated_at else None,
+                "profile": {
+                    "name": profile.name,
+                    "phone": profile.phone,
+                    "email": profile.email,
+                    "experience_years": profile.experience_years,
+                    "current_position": profile.current_position,
+                    "target_positions": profile.target_positions,
+                    "preferred_cities": profile.preferred_cities,
+                    "salary_min": profile.salary_min,
+                    "salary_max": profile.salary_max,
+                    "education": profile.education,
+                    "school": profile.school,
+                    "skills": profile.skills,
+                } if profile else None,
+                "search_strategy": {
+                    "primary_keywords": strategy.primary_keywords,
+                    "variant_keywords": strategy.variant_keywords,
+                    "skill_combinations": strategy.skill_combinations,
+                    "cities": strategy.cities,
+                } if strategy else None,
+            }
+
+        finally:
+            db.close()
+
+    def update_resume_profile(
+        self,
+        resume_id: int,
+        profile_data: Dict[str, Any],
+    ) -> bool:
+        """更新简历画像"""
+        db = SessionLocal()
+        try:
+            profile = db.query(ResumeProfile).filter(
+                ResumeProfile.resume_id == resume_id
+            ).first()
+
+            if not profile:
+                profile = ResumeProfile(resume_id=resume_id)
+                db.add(profile)
+
+            # 更新字段
+            updatable_fields = [
+                "name", "phone", "email", "experience_years",
+                "current_position", "target_positions", "preferred_cities",
+                "salary_min", "salary_max", "education", "school",
+                "major", "skills", "work_experiences",
+            ]
+
+            for field in updatable_fields:
+                if field in profile_data:
+                    setattr(profile, field, profile_data[field])
+
+            db.commit()
+            return True
+
+        except Exception as e:
+            logger.error(f"更新简历画像失败: {e}")
+            db.rollback()
+            return False
+        finally:
+            db.close()
+
+    # 保留旧API兼容性方法
     async def parse_resume_file(
         self,
         file_path: str,
         user_id: int = 1,
         use_ai: bool = False,
     ) -> Dict[str, Any]:
-        """
-        解析简历文件
-
-        Args:
-            file_path: 简历文件路径
-            user_id: 用户ID
-            use_ai: 是否使用AI模式
-
-        Returns:
-            {
-                "success": bool,
-                "extracted_data": dict,
-                "resume_text": str,
-                "error": str (if failed)
-            }
-        """
-        try:
-            # 1. PDF提取文本
-            logger.info(f"开始解析简历: {file_path}")
-            resume_text = self.pdf_parser.extract_text(file_path)
-
-            if not resume_text or len(resume_text) < 50:
-                return {
-                    "success": False,
-                    "error": "无法从PDF中提取有效文本，请确认文件是否正确",
-                }
-
-            # 2. 信息提取
-            if use_ai and self.ai_service:
-                extracted_data = await self._extract_with_ai(resume_text)
-            else:
-                extracted_data = self.rule_extractor.extract(resume_text)
-
-            # 3. 更新用户画像
-            self._update_user_profile(
-                user_id=user_id,
-                data=extracted_data,
-                resume_text=resume_text,
-                file_path=file_path,
-            )
-
-            logger.info(f"简历解析成功，提取了 {len([v for v in extracted_data.values() if v])} 个字段")
-
-            return {
-                "success": True,
-                "extracted_data": extracted_data,
-                "resume_text": resume_text,
-                "file_path": file_path,
-            }
-
-        except FileNotFoundError as e:
-            logger.error(f"文件不存在: {file_path}")
-            return {"success": False, "error": f"文件不存在: {file_path}"}
-
-        except Exception as e:
-            logger.error(f"简历解析失败: {e}")
-            return {"success": False, "error": str(e)}
-
-    async def _extract_with_ai(self, resume_text: str) -> Dict[str, Any]:
-        """使用AI提取简历信息"""
-        if not self.ai_service:
-            logger.warning("AI服务不可用，回退到规则模式")
-            return self.rule_extractor.extract(resume_text)
-
-        try:
-            result = await self.ai_service.extract_resume_info(resume_text)
-            return result
-        except Exception as e:
-            logger.error(f"AI提取失败: {e}，回退到规则模式")
-            return self.rule_extractor.extract(resume_text)
-
-    def _update_user_profile(
-        self,
-        user_id: int,
-        data: Dict[str, Any],
-        resume_text: str,
-        file_path: str,
-    ) -> None:
-        """更新用户画像"""
-        db = SessionLocal()
-        try:
-            profile = db.query(UserProfile).filter(
-                UserProfile.id == user_id
-            ).first()
-
-            if not profile:
-                profile = UserProfile(id=user_id)
-                db.add(profile)
-
-            # 字段映射
-            field_mapping = {
-                "name": "name",
-                "gender": "gender",
-                "age": "age",
-                "phone": "phone",
-                "email": "email",
-                "city": "city",
-                "education": "education",
-                "school": "school",
-                "major": "major",
-                "experience_years": "experience_years",
-                "target_positions": "target_positions",
-                "target_cities": "target_cities",
-                "expected_salary_min": "expected_salary_min",
-                "expected_salary_max": "expected_salary_max",
-                "skills": "skills",
-                "certifications": "certifications",
-                "work_experiences": "work_experiences",
-            }
-
-            for source_field, target_field in field_mapping.items():
-                value = data.get(source_field)
-                if value is not None:
-                    setattr(profile, target_field, value)
-
-            # 简历文本和文件路径
-            profile.resume_text = resume_text
-            profile.resume_file = file_path
-
-            db.commit()
-            logger.info(f"用户画像已更新: user_id={user_id}")
-
-        except Exception as e:
-            logger.error(f"更新用户画像失败: {e}")
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        """解析简历文件（旧API兼容）"""
+        return await self.parse_resume(
+            file_path=file_path,
+            file_type="pdf",
+            user_id=user_id,
+            use_ai=use_ai,
+        )
 
     def get_resume_status(self, user_id: int = 1) -> Dict[str, Any]:
-        """获取简历状态"""
-        db = SessionLocal()
-        try:
-            profile = db.query(UserProfile).filter(
-                UserProfile.id == user_id
-            ).first()
-
-            if not profile:
-                return {
-                    "has_resume": False,
-                    "resume_text": None,
-                    "resume_file": None,
-                }
-
+        """获取简历状态（旧API兼容）"""
+        resumes = self.get_resume_list(user_id)
+        if not resumes:
             return {
-                "has_resume": bool(profile.resume_text),
-                "resume_text": profile.resume_text[:500] + "..." if profile.resume_text and len(profile.resume_text) > 500 else profile.resume_text,
-                "resume_file": profile.resume_file,
-                "parsed": bool(profile.skills or profile.target_positions),
+                "has_resume": False,
+                "resume_text": None,
+                "resume_file": None,
             }
 
-        finally:
-            db.close()
+        primary = next((r for r in resumes if r["is_primary"]), resumes[0])
+        detail = self.get_resume_detail(primary["id"])
+
+        return {
+            "has_resume": True,
+            "resume_text": detail["profile"]["name"] if detail and detail["profile"] else None,
+            "resume_file": detail["file_path"] if detail else None,
+            "parsed": bool(detail and detail["profile"]),
+        }
 
     async def generate_search_keywords(
         self,
         user_id: int = 1,
         use_ai: bool = False,
     ) -> Dict[str, Any]:
-        """
-        基于用户画像生成搜索关键词
-
-        Returns:
-            {
-                "keywords": ["Python后端", "Java开发", ...],
-                "filter_config": {...}
-            }
-        """
-        db = SessionLocal()
-        try:
-            profile = db.query(UserProfile).filter(
-                UserProfile.id == user_id
-            ).first()
-
-            if not profile or not profile.resume_text:
-                return {
-                    "keywords": [],
-                    "filter_config": {},
-                    "error": "请先上传并解析简历",
-                }
-
-            # 构建关键词
-            keywords = []
-
-            # 从目标职位提取
-            if profile.target_positions:
-                keywords.extend(profile.target_positions)
-
-            # 从技能提取（前3个核心技能）
-            if profile.skills:
-                core_skills = profile.skills[:3]
-                for skill in core_skills:
-                    # 组合技能+职位
-                    if profile.target_positions:
-                        keywords.append(f"{skill}{profile.target_positions[0]}")
-                    else:
-                        keywords.append(skill)
-
-            # 使用AI生成更智能的关键词
-            if use_ai and self.ai_service:
-                try:
-                    profile_dict = self._profile_to_dict(profile)
-                    ai_result = await self.ai_service.generate_search_keywords(profile_dict)
-                    if ai_result.get("keywords"):
-                        keywords = ai_result["keywords"]
-                except Exception as e:
-                    logger.warning(f"AI生成关键词失败: {e}")
-
-            # 构建过滤条件
-            filter_config = {
-                "salary_range": None,
-                "cities": profile.target_cities or [],
-                "keywords": profile.skills[:5] if profile.skills else [],
-            }
-
-            if profile.expected_salary_min and profile.expected_salary_max:
-                filter_config["salary_range"] = (
-                    profile.expected_salary_min,
-                    profile.expected_salary_max,
-                )
-
+        """生成搜索关键词（旧API兼容）"""
+        resumes = self.get_resume_list(user_id)
+        if not resumes:
             return {
-                "keywords": list(set(keywords))[:10],  # 去重，最多10个
-                "filter_config": filter_config,
+                "keywords": [],
+                "filter_config": {},
+                "error": "请先上传并解析简历",
             }
 
-        finally:
-            db.close()
+        primary = next((r for r in resumes if r["is_primary"]), resumes[0])
+        detail = self.get_resume_detail(primary["id"])
 
-    def _profile_to_dict(self, profile: UserProfile) -> Dict[str, Any]:
-        """将UserProfile转换为字典"""
+        if not detail or not detail["search_strategy"]:
+            return {
+                "keywords": [],
+                "filter_config": {},
+            }
+
+        strategy = detail["search_strategy"]
+        keywords = (
+            strategy.get("primary_keywords", []) +
+            strategy.get("variant_keywords", []) +
+            strategy.get("skill_combinations", [])
+        )
+
         return {
-            "name": profile.name,
-            "skills": profile.skills or [],
-            "experience_years": profile.experience_years,
-            "education": profile.education,
-            "target_positions": profile.target_positions or [],
-            "target_cities": profile.target_cities or [],
-            "expected_salary_min": profile.expected_salary_min,
-            "expected_salary_max": profile.expected_salary_max,
+            "keywords": keywords[:10],
+            "filter_config": {
+                "cities": strategy.get("cities", []),
+                "salary_range": (
+                    detail["profile"]["salary_min"],
+                    detail["profile"]["salary_max"],
+                ) if detail["profile"] else None,
+            },
         }
 
 

@@ -6,6 +6,8 @@ from backend.core.resume.docx_parser import DocxParser
 from backend.core.resume.md_parser import MarkdownParser
 from backend.core.resume.txt_parser import TxtParser
 from backend.core.resume.rule_extractor import RuleExtractor
+from backend.core.resume.ai_extractor import AIExtractor, get_ai_extractor
+from backend.core.resume.strategy_generator import StrategyGenerator, get_strategy_generator
 from backend.core.resume.resume_service import ResumeService, get_resume_service
 
 # 解析器注册表
@@ -75,6 +77,10 @@ __all__ = [
     "MarkdownParser",
     "TxtParser",
     "RuleExtractor",
+    "AIExtractor",
+    "get_ai_extractor",
+    "StrategyGenerator",
+    "get_strategy_generator",
     "ResumeService",
     "get_resume_service",
     "get_parser",
