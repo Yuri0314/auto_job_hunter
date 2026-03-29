@@ -10,6 +10,9 @@ from .models import (
     SystemConfig,
     JobStatus,
     ApplicationStatus,
+    Resume,
+    ResumeProfile,
+    SearchStrategy,
 )
 from .session import Base, engine, SessionLocal, get_db, init_db
 
@@ -23,6 +26,9 @@ __all__ = [
     "SystemConfig",
     "JobStatus",
     "ApplicationStatus",
+    "Resume",
+    "ResumeProfile",
+    "SearchStrategy",
     "Base",
     "engine",
     "SessionLocal",

@@ -2,7 +2,8 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, JSON, Float, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, JSON, Float, Enum as SQLEnum, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
 
@@ -83,6 +84,13 @@ class Job(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
     applied_at = Column(DateTime, comment="投递时间")
 
+    # 职位池状态
+    pool_status = Column(String(20), default="pending", comment="职位池状态: pending/starred/rejected/queued")
+    starred_at = Column(DateTime, comment="收藏时间")
+
+    # 匹配分析扩展
+    match_details = Column(JSON, comment="匹配分析详情")
+
     def __repr__(self):
         return f"<Job({self.title} @ {self.company})>"
 
@@ -112,6 +120,11 @@ class Application(Base):
     created_at = Column(DateTime, default=func.now(), comment="创建时间")
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
     submitted_at = Column(DateTime, comment="提交时间")
+
+    # 投递状态追踪
+    delivery_status = Column(String(20), default="submitted", comment="投递状态: submitted/read/replied/interview/rejected/expired")
+    status_updated_at = Column(DateTime, comment="状态更新时间")
+    greeting_used = Column(Text, comment="使用的打招呼语")
 
     def __repr__(self):
         return f"<Application(job_id={self.job_id}, status={self.status})>"
@@ -152,6 +165,110 @@ class Message(Base):
 
     def __repr__(self):
         return f"<Message(from={self.sender_name}, content={self.content[:20]}...)>"
+
+
+class Resume(Base):
+    """简历表 - 支持多简历管理"""
+    __tablename__ = "resumes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, default=1, comment="用户ID")
+    name = Column(String(200), nullable=False, comment="简历名称")
+    file_path = Column(String(500), comment="原始文件路径")
+    file_type = Column(String(20), default="pdf", comment="文件类型: pdf/docx/md/txt/paste")
+    parse_engine = Column(String(20), default="rule", comment="解析引擎: rule/ai")
+    is_primary = Column(Boolean, default=False, comment="是否主简历")
+
+    # 时间戳
+    created_at = Column(DateTime, default=func.now(), comment="创建时间")
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    # 关联
+    profile = relationship("ResumeProfile", back_populates="resume", uselist=False, cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Resume(id={self.id}, name={self.name})>"
+
+
+class ResumeProfile(Base):
+    """简历解析结果表"""
+    __tablename__ = "resume_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="CASCADE"), nullable=False, comment="关联简历ID")
+
+    # 基本信息
+    name = Column(String(50), comment="姓名")
+    phone = Column(String(20), comment="手机号")
+    email = Column(String(100), comment="邮箱")
+    gender = Column(String(10), comment="性别")
+    age = Column(Integer, comment="年龄")
+
+    # 职业信息
+    experience_years = Column(Integer, comment="工作年限")
+    current_position = Column(String(100), comment="当前职位")
+    current_company = Column(String(200), comment="当前公司")
+
+    # 求职意向
+    target_positions = Column(JSON, comment="目标职位列表")
+    preferred_cities = Column(JSON, comment="意向城市列表")
+    salary_min = Column(Integer, comment="期望薪资下限(K)")
+    salary_max = Column(Integer, comment="期望薪资上限(K)")
+
+    # 技能与背景
+    education = Column(String(50), comment="学历")
+    school = Column(String(100), comment="学校")
+    major = Column(String(100), comment="专业")
+    skills = Column(JSON, comment="技能列表")
+    work_experiences = Column(JSON, comment="工作经历列表")
+    projects = Column(JSON, comment="项目经历列表")
+
+    # AI生成建议
+    ai_search_suggestions = Column(JSON, comment="AI生成的搜索建议")
+    ai_match_summary = Column(Text, comment="AI匹配摘要")
+
+    # 原始数据
+    raw_text = Column(Text, comment="简历原始文本")
+
+    # 时间戳
+    created_at = Column(DateTime, default=func.now(), comment="创建时间")
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    # 关联
+    resume = relationship("Resume", back_populates="profile")
+
+    def __repr__(self):
+        return f"<ResumeProfile(resume_id={self.resume_id}, name={self.name})>"
+
+
+class SearchStrategy(Base):
+    """搜索策略表"""
+    __tablename__ = "search_strategies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="CASCADE"), comment="关联简历ID")
+
+    # 搜索关键词
+    primary_keywords = Column(JSON, comment="核心关键词")
+    variant_keywords = Column(JSON, comment="变体关键词")
+    skill_combinations = Column(JSON, comment="技能组合关键词")
+
+    # 搜索条件
+    cities = Column(JSON, comment="目标城市")
+    salary_min = Column(Integer, comment="薪资下限(K)")
+    salary_max = Column(Integer, comment="薪资上限(K)")
+    exclude_keywords = Column(JSON, comment="排除关键词")
+
+    # 优先级与状态
+    priority = Column(Integer, default=0, comment="优先级")
+    is_active = Column(Boolean, default=True, comment="是否启用")
+
+    # 时间戳
+    created_at = Column(DateTime, default=func.now(), comment="创建时间")
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), comment="更新时间")
+
+    def __repr__(self):
+        return f"<SearchStrategy(id={self.id}, resume_id={self.resume_id})>"
 
 
 class UserProfile(Base):
@@ -195,6 +312,10 @@ class UserProfile(Base):
     strategy = Column(String(50), default="simple", comment="投递策略")
     auto_reply_enabled = Column(Boolean, default=False, comment="自动回复开关")
     daily_application_limit = Column(Integer, default=50, comment="每日投递上限")
+
+    # 运行模式
+    run_mode = Column(String(20), default="manual", comment="运行模式: manual/ai_assisted/ai_full_auto")
+    primary_resume_id = Column(Integer, comment="主简历ID")
 
     # 时间戳
     created_at = Column(DateTime, default=func.now(), comment="创建时间")
