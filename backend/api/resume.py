@@ -76,6 +76,12 @@ class ResumeProfileUpdate(BaseModel):
     skills: Optional[List[str]] = None
 
 
+class ParseTextRequest(BaseModel):
+    """粘贴文本解析请求"""
+    text: str
+    use_ai: bool = False
+
+
 class ResumeResponse(BaseModel):
     """简历响应"""
     id: int
@@ -96,31 +102,49 @@ async def upload_and_parse_resume(
     """
     上传并解析简历
 
-    - 支持 PDF 格式
-    - use_ai: 是否使用AI模式（默认规则模式，更快但准确度中等）
+    支持 PDF、Word(.docx)、Markdown(.md)、纯文本(.txt) 格式
     """
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "目前仅支持PDF格式简历")
-
-    # 保存临时文件
     import tempfile
     import os
 
+    # 检查文件类型
+    filename = file.filename.lower()
+    supported_extensions = [".pdf", ".docx", ".doc", ".md", ".markdown", ".txt"]
+
+    ext = os.path.splitext(filename)[1]
+    if ext not in supported_extensions:
+        raise HTTPException(
+            400,
+            f"不支持的文件格式: {ext}。支持的格式: {', '.join(supported_extensions)}"
+        )
+
+    # 确定文件类型
+    file_type_map = {
+        ".pdf": "pdf",
+        ".docx": "docx",
+        ".doc": "docx",
+        ".md": "md",
+        ".markdown": "md",
+        ".txt": "txt",
+    }
+    file_type = file_type_map.get(ext, "txt")
+
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
 
         # 解析简历
         service = get_resume_service()
-        result = await service.parse_resume_file(
+        result = await service.parse_resume(
             file_path=tmp_path,
+            file_type=file_type,
             user_id=user_id,
             use_ai=use_ai,
         )
 
-        # 不删除临时文件，保留给后续使用
+        # 保留文件路径供后续使用
         if result.get("success"):
             result["file_path"] = tmp_path
 
@@ -147,13 +171,28 @@ async def parse_resume_file(
     if not os.path.exists(file_path):
         raise HTTPException(404, f"文件不存在: {file_path}")
 
-    if not file_path.lower().endswith(".pdf"):
-        raise HTTPException(400, "目前仅支持PDF格式简历")
+    # 支持多种文件格式
+    supported_extensions = [".pdf", ".docx", ".doc", ".md", ".markdown", ".txt"]
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in supported_extensions:
+        raise HTTPException(400, f"不支持的文件格式: {ext}")
+
+    # 确定文件类型
+    file_type_map = {
+        ".pdf": "pdf",
+        ".docx": "docx",
+        ".doc": "docx",
+        ".md": "md",
+        ".markdown": "md",
+        ".txt": "txt",
+    }
+    file_type = file_type_map.get(ext, "txt")
 
     try:
         service = get_resume_service()
-        result = await service.parse_resume_file(
+        result = await service.parse_resume(
             file_path=file_path,
+            file_type=file_type,
             user_id=user_id,
             use_ai=use_ai,
         )
@@ -163,6 +202,35 @@ async def parse_resume_file(
     except Exception as e:
         logger.error(f"Parse resume error: {e}")
         raise HTTPException(500, f"简历解析失败: {str(e)}")
+
+
+@router.post("/parse-text")
+async def parse_pasted_text(
+    request: ParseTextRequest,
+    user_id: int = 1,
+):
+    """
+    解析粘贴的简历文本
+
+    用户可以直接粘贴简历内容进行解析
+    """
+    if len(request.text) < 50:
+        raise HTTPException(400, "文本内容太少，请提供完整的简历信息")
+
+    try:
+        service = get_resume_service()
+        result = await service.parse_resume(
+            file_path=request.text,
+            file_type="paste",
+            user_id=user_id,
+            use_ai=request.use_ai,
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Parse text error: {e}")
+        raise HTTPException(500, f"解析失败: {str(e)}")
 
 
 @router.get("/status")
@@ -411,33 +479,42 @@ async def create_resume(
     )
 
 
+@router.get("/{resume_id}")
+async def get_resume_detail_api(
+    resume_id: int,
+):
+    """获取简历详情"""
+    service = get_resume_service()
+    detail = service.get_resume_detail(resume_id)
+
+    if not detail:
+        raise HTTPException(404, "简历不存在")
+
+    return detail
+
+
 @router.put("/{resume_id}/profile")
-async def update_resume_profile(
+async def update_resume_profile_api(
     resume_id: int,
     request: ResumeProfileUpdate,
     db: Session = Depends(get_db),
 ):
-    """更新简历画像"""
-    from backend.core.database import Resume, ResumeProfile
+    """更新简历画像（用户编辑修正）"""
+    from backend.core.database import Resume
 
+    # 检查简历是否存在
     resume = db.query(Resume).filter(Resume.id == resume_id).first()
     if not resume:
         raise HTTPException(404, "简历不存在")
 
-    profile = db.query(ResumeProfile).filter(
-        ResumeProfile.resume_id == resume_id
-    ).first()
+    service = get_resume_service()
+    success = service.update_resume_profile(
+        resume_id=resume_id,
+        profile_data=request.dict(exclude_unset=True),
+    )
 
-    if not profile:
-        profile = ResumeProfile(resume_id=resume_id)
-        db.add(profile)
-
-    # 更新字段
-    update_data = request.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(profile, field, value)
-
-    db.commit()
+    if not success:
+        raise HTTPException(500, "更新失败")
 
     return {"success": True, "message": "简历画像已更新"}
 
