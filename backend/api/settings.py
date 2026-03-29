@@ -17,6 +17,7 @@ from backend.core.config import (
     NON_EDITABLE_KEYS,
 )
 from backend.core.database import SessionLocal, SystemConfig
+from backend.core.security import encrypt_value, decrypt_value, is_encrypted
 
 
 router = APIRouter()
@@ -173,15 +174,21 @@ async def update_config_item(
     """更新单个配置项"""
     validate_editable(key)
 
+    # 敏感配置加密存储
+    value_to_store = request.value
+    if key in SENSITIVE_KEYS and request.value:
+        value_to_store = encrypt_value(request.value)
+        logger.info(f"Encrypted sensitive config: {key}")
+
     # 更新或创建数据库记录
     config = get_config_from_db(db, key)
 
     if config:
-        config.value = request.value
+        config.value = value_to_store
     else:
         config = SystemConfig(
             key=key,
-            value=request.value,
+            value=value_to_store,
             description=CONFIG_METADATA.get(key, {}).get("description", ""),
         )
         db.add(config)
@@ -213,14 +220,19 @@ async def batch_update_config(
         try:
             validate_editable(key)
 
+            # 敏感配置加密存储
+            value_to_store = value
+            if key in SENSITIVE_KEYS and value:
+                value_to_store = encrypt_value(value)
+
             # 更新数据库
             config = get_config_from_db(db, key)
             if config:
-                config.value = value
+                config.value = value_to_store
             else:
                 config = SystemConfig(
                     key=key,
-                    value=value,
+                    value=value_to_store,
                     description=CONFIG_METADATA.get(key, {}).get("description", ""),
                 )
                 db.add(config)

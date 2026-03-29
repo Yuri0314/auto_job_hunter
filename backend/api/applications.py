@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -20,6 +20,8 @@ router = APIRouter()
 
 class ApplicationResponse(BaseModel):
     """投递响应模型"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     job_id: int
     platform: str
@@ -27,9 +29,6 @@ class ApplicationResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     submitted_at: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 class ApplicationListResponse(BaseModel):

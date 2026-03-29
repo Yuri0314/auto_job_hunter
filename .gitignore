@@ -81,3 +81,6 @@ cookies/
 # Debug screenshots
 *.png
 !docs/**/*.png
+
+# Test results
+test_result.json

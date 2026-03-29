@@ -1,8 +1,7 @@
 """数据库基础配置"""
 
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.core.config import get_settings
 
 settings = get_settings()

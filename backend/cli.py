@@ -14,9 +14,9 @@ import webbrowser
 import os
 from loguru import logger
 
-# Windows asyncio 兼容性修复
+# Windows asyncio 兼容性修复 - Playwright 需要 ProactorEventLoop 支持子进程
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from backend.core.config import get_settings
 from backend.core.database import init_db

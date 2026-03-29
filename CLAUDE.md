@@ -30,21 +30,21 @@ playwright install chromium
 python run.py init
 
 # 启动服务
-python run.py web              # FastAPI后端
-streamlit run frontend/app.py # 前端GUI
+python run.py web              # FastAPI后端 (port 8000)
+streamlit run frontend/app.py  # 前端GUI (port 8501)
+python run.py gui              # 一键启动后端+前端
 
 # CLI使用
 python run.py search -k "Python后端" -p boss liepin -c 北京
 python run.py search -k "Python" -p boss --ai -a  # AI模式+自动投递
-python run.py daemon -i 60     # 守护进程模式
 
-# 测试与质量检查
+# 测试
 pytest tests/
+pytest tests/unit/test_config.py -v  # 单个测试文件
 pytest --cov=backend tests/
-black backend/
-isort backend/
-flake8 backend/
-mypy backend/
+
+# 代码质量
+black backend/ && isort backend/
 ```
 
 ## 核心架构
@@ -56,65 +56,65 @@ mypy backend/
 
 ### 平台适配器接口
 
-所有适配器继承 `BasePlatformAdapter` (`backend/adapters/base_adapter.py`)：
+所有适配器继承 `BasePlatformAdapter` (`backend/adapters/base_adapter.py`)。添加新平台：创建 `backend/adapters/xxx_adapter.py`，继承基类，在 `__init__.py` 注册。
+
+### 关键API端点
+
+| 端点 | 说明 |
+|------|------|
+| `/api/system/login/{platform}` | 平台登录 (POST) |
+| `/api/system/platforms` | 平台状态 (GET) |
+| `/api/resume/status` | 简历状态 (GET) |
+| `/api/resume/download` | 简历下载 (GET) |
+| `/api/settings/items` | 配置项 (GET) |
+| `/api/user/profile` | 用户画像 (GET/PUT) |
+
+**注意:** 登录API是 `/system/login` 不是 `/auth/login`。
+
+## Windows 兼容性
+
+Playwright在Windows上需要 `WindowsProactorEventLoopPolicy` 支持子进程：
 
 ```python
-class BasePlatformAdapter(ABC):
-    async def login(username, password) -> bool
-    async def check_login_status() -> bool
-    async def search_jobs(keywords, city, salary_range, page) -> SearchResult
-    async def apply_job(job_id, greeting, resume_id) -> ApplicationResult
-    async def get_messages(unread_only, limit) -> List[Message]
-    async def reply_message(message_id, content) -> bool
+# tests/conftest.py 和 backend/cli.py 中已配置
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 ```
 
-添加新平台：创建 `backend/adapters/xxx_adapter.py`，继承基类，在 `__init__.py` 注册。
+## Streamlit Loading模式
 
-### AI服务
+显示loading时必须用全局状态完全遮挡旧内容，否则旧按钮仍可点击：
 
-支持多提供商 (`backend/agents/ai/ai_service.py`)：
-- OpenAI (GPT-4)
-- Ollama (本地模型如 llama3)
+```python
+if st.session_state.loading:
+    # 全屏loading遮挡，不渲染任何其他内容
+    st.markdown("<div style='position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999'>...</div>")
+    # 执行任务
+    st.session_state.loading = False
+    st.rerun()
+else:
+    # 正常渲染页面
+```
 
-自动fallback和成本追踪。Prompt模板用于匹配分析和打招呼生成。
+**不要用 `st.spinner()`** - 它无法阻止旧内容渲染。
 
-### 数据结构
+## 前端设计风格
 
-使用dataclasses定义核心数据：
-- `JobInfo`: 职位信息
-- `FilterConfig`: 过滤规则
-- `MatchResult`: AI匹配结果
-- `ApplicationResult`: 投递结果
-
-## 编码规范
-
-- Python 3.11+，使用类型注解
-- Black格式化(88字符行宽)，isort排序import
-- 使用dataclasses而非Pydantic模型
-- Async/await贯穿全栈(FastAPI、适配器、AI服务)
-- 日志使用 `loguru`
-
-## 数据库模型
-
-SQLAlchemy 2.0，开发用SQLite，生产用PostgreSQL：
-- `Job`: 职位缓存
-- `Application`: 投递记录
-- `Message`: HR消息
-- `UserProfile`: 用户画像
-- `FilterRule`: 过滤规则
-- `SystemConfig`: 系统配置
+偏好暗黑科技风格 (Obsidian Terminal)：
+- 深黑背景 (#050508)
+- 电蓝霓虹强调色 (#00d4ff)
+- 金色点缀 (#fbbf24)
+- JetBrains Mono 字体
 
 ## Git提交规范
 
 - `feat:` 新功能
 - `fix:` Bug修复
 - `refactor:` 重构
-- `test:` 测试
-- `chore:` 构建/工具
+- 不添加 `Co-Authored-By` 署名
 
 ## 注意事项
 
 - 招聘平台有反爬机制，控制投递频率(建议5秒+间隔)
-- 建议使用半自动模式，关键操作需用户确认
 - BOSS直聘风险较高，建议用小号测试
-- 遵守相关法律法规
+- 修复后先自己测试验证，再让用户刷新

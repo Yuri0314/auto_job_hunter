@@ -53,14 +53,20 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS配置
+    # CORS配置 - 从配置文件读取允许的域名
+    allowed_origins = settings.allowed_origins.split(",") if settings.allowed_origins else []
+    # 开发模式下允许所有来源，生产模式使用配置的域名
+    if settings.debug and not allowed_origins:
+        allowed_origins = ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # 生产环境应该限制
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    logger.info(f"CORS allowed origins: {allowed_origins}")
 
     # 注册路由
     app.include_router(api_router, prefix="/api")

@@ -1,9 +1,11 @@
 """核心配置管理模块 - 支持三层优先级"""
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from typing import Optional, Dict, Any, List, Union
 from functools import lru_cache
+
+from backend.core.security import decrypt_value, is_encrypted
 
 # 配置分类定义
 CONFIG_CATEGORIES = {
@@ -258,11 +260,19 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = Field(default=None, alias="SMTP_PASSWORD")
     webhook_url: Optional[str] = Field(default=None, alias="WEBHOOK_URL")
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"  # 忽略 .env 中的未知字段
+    # CORS 配置 - 生产环境应设置具体域名，多个用逗号分隔
+    allowed_origins: str = Field(
+        default="http://localhost:8501,http://127.0.0.1:8501,http://localhost:3000",
+        alias="ALLOWED_ORIGINS"
+    )
+
+    # Pydantic V2 配置方式
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",  # 忽略 .env 中的未知字段
+    )
 
     # 内部状态（不计入配置）
     _db_overrides: Dict[str, str] = {}
@@ -279,7 +289,17 @@ class Settings(BaseSettings):
         from backend.core.database import SystemConfig
 
         configs = db_session.query(SystemConfig).all()
-        self._db_overrides = {c.key: c.value for c in configs}
+        for c in configs:
+            # 解密敏感配置
+            if c.key in SENSITIVE_KEYS and c.value and is_encrypted(c.value):
+                try:
+                    self._db_overrides[c.key] = decrypt_value(c.value)
+                except Exception:
+                    # 解密失败，使用原值
+                    self._db_overrides[c.key] = c.value
+            else:
+                self._db_overrides[c.key] = c.value
+
         self._initialized_from_db = True
 
     def get_effective_value(self, field_name: str) -> Any:

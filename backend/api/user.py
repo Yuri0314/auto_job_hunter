@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from backend.core.database import UserProfile, get_db
@@ -13,6 +13,8 @@ router = APIRouter()
 
 class UserProfileResponse(BaseModel):
     """用户画像响应"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: Optional[str] = None
     email: Optional[str] = None
@@ -30,9 +32,6 @@ class UserProfileResponse(BaseModel):
     strategy: Optional[str] = None
     auto_reply_enabled: bool = False
     daily_application_limit: int = 50
-
-    class Config:
-        from_attributes = True
 
 
 class UserProfileUpdate(BaseModel):

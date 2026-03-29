@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from backend.core.database import Message, get_db
@@ -13,6 +13,8 @@ router = APIRouter()
 
 class MessageResponse(BaseModel):
     """消息响应模型"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     platform: str
     sender_name: Optional[str] = None
@@ -24,9 +26,6 @@ class MessageResponse(BaseModel):
     is_replied: bool
     suggested_reply: Optional[str] = None
     received_at: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 class MessageListResponse(BaseModel):

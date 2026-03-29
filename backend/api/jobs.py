@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from backend.core.database import (
@@ -17,6 +17,8 @@ router = APIRouter()
 
 class JobResponse(BaseModel):
     """职位响应模型"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     job_id: str
     platform: str
@@ -30,9 +32,6 @@ class JobResponse(BaseModel):
     match_score: Optional[int] = None
     status: str
     applied_at: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 class JobListResponse(BaseModel):

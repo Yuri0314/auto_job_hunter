@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from backend.core.database import FilterRule, get_db
@@ -13,6 +13,8 @@ router = APIRouter()
 
 class FilterRuleResponse(BaseModel):
     """过滤规则响应"""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     name: str
     description: Optional[str] = None
@@ -24,9 +26,6 @@ class FilterRuleResponse(BaseModel):
     experience_range: Optional[List[int]] = None
     is_active: bool
     priority: int
-
-    class Config:
-        from_attributes = True
 
 
 class FilterRuleCreate(BaseModel):
