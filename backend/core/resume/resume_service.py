@@ -110,7 +110,7 @@ class ResumeService:
                 extracted_data = self._rule_extractor.extract(text)
 
             # 3. 保存到数据库
-            resume, profile = self._save_to_database(
+            resume_id, profile_id = self._save_to_database(
                 user_id=user_id,
                 file_path=file_path if file_type != "paste" else None,
                 file_type=file_type,
@@ -122,17 +122,17 @@ class ResumeService:
 
             # 4. 生成搜索策略
             strategy = self._generate_and_save_strategy(
-                resume_id=resume.id,
+                resume_id=resume_id,
                 profile_data=extracted_data,
                 use_ai=use_ai,
             )
 
-            logger.info(f"简历解析成功: resume_id={resume.id}")
+            logger.info(f"简历解析成功: resume_id={resume_id}")
 
             return {
                 "success": True,
-                "resume_id": resume.id,
-                "profile_id": profile.id,
+                "resume_id": resume_id,
+                "profile_id": profile_id,
                 "extracted_data": extracted_data,
                 "search_strategy": strategy,
                 "file_type": file_type,
@@ -219,9 +219,12 @@ class ResumeService:
                 raw_text=raw_text[:10000] if raw_text else None,  # 限制长度
             )
             db.add(profile)
+            # 获取ID后再关闭session，避免detached instance错误
+            resume_id = resume.id
+            profile_id = profile.id
             db.commit()
 
-            return resume, profile
+            return resume_id, profile_id
 
         except Exception as e:
             logger.error(f"保存简历失败: {e}")
