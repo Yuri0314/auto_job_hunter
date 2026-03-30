@@ -54,6 +54,19 @@ def delete_resume(resume_id):
         return {"success": False, "error": str(e)}
 
 
+def batch_delete_resumes(ids):
+    """批量删除简历"""
+    try:
+        r = requests.post(
+            f"{API_BASE}/resume/batch-delete",
+            json={"ids": ids},
+            timeout=10
+        )
+        return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def upload_resume(file, use_ai=False):
     """上传简历文件"""
     try:
@@ -133,11 +146,6 @@ def render_resume_manager():
 def _render_resume_list():
     """渲染简历列表"""
 
-    # 刷新按钮
-    if st.button("🔄 刷新列表", key="refresh_list"):
-        if "_resume_list_cache" in st.session_state:
-            del st.session_state._resume_list_cache
-
     # 获取简历列表（带缓存）
     if "_resume_list_cache" not in st.session_state:
         st.session_state._resume_list_cache = fetch_resume_list()
@@ -148,6 +156,60 @@ def _render_resume_list():
     if not resumes:
         st.info("暂无简历，请上传或粘贴简历内容")
         return
+
+    # 初始化选中状态
+    if "selected_resumes" not in st.session_state:
+        st.session_state.selected_resumes = set()
+
+    # 工具栏
+    col_t1, col_t2, col_t3, col_t4 = st.columns([1, 1, 1, 2])
+
+    with col_t1:
+        all_ids = [r.get("id") for r in resumes]
+        if st.button("全选", key="select_all", use_container_width=True):
+            st.session_state.selected_resumes = set(all_ids)
+            st.rerun()
+
+    with col_t2:
+        if st.button("取消全选", key="clear_selection", use_container_width=True):
+            st.session_state.selected_resumes = set()
+            st.rerun()
+
+    with col_t3:
+        selected_count = len(st.session_state.selected_resumes)
+        if selected_count > 0:
+            if st.button(f"批量删除 ({selected_count})", key="batch_delete_btn", use_container_width=True):
+                st.session_state._show_batch_delete_confirm = True
+                st.rerun()
+
+    with col_t4:
+        if st.button("刷新列表", key="refresh_list", use_container_width=True):
+            if "_resume_list_cache" in st.session_state:
+                del st.session_state._resume_list_cache
+            st.rerun()
+
+    # 批量删除确认弹窗
+    if st.session_state.get("_show_batch_delete_confirm"):
+        selected_ids = list(st.session_state.selected_resumes)
+        st.warning(f"确认删除 {len(selected_ids)} 条简历？此操作不可撤销。")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("确认删除", key="confirm_batch_delete", type="primary"):
+                result = batch_delete_resumes(selected_ids)
+                if result.get("success"):
+                    deleted = result.get("deleted", 0)
+                    st.session_state._resume_msg = ("success", f"已删除 {deleted} 条简历")
+                    st.session_state.selected_resumes = set()
+                    if "_resume_list_cache" in st.session_state:
+                        del st.session_state._resume_list_cache
+                else:
+                    st.session_state._resume_msg = ("error", result.get("error", "删除失败"))
+                del st.session_state._show_batch_delete_confirm
+                st.rerun()
+        with c2:
+            if st.button("取消", key="cancel_batch_delete"):
+                del st.session_state._show_batch_delete_confirm
+                st.rerun()
 
     # 显示简历卡片
     for resume in resumes:
@@ -167,80 +229,91 @@ def _render_resume_card(resume):
     is_primary = resume.get("is_primary", False)
     profile = resume.get("profile") or {}
 
-    # 卡片容器
-    with st.container():
-        col1, col2 = st.columns([3, 1])
+    # 复选框列
+    check_col, content_col = st.columns([1, 4])
 
-        with col1:
-            # 基本信息
-            name = resume.get("name", "未命名简历")
-            file_type = resume.get("file_type", "-").upper()
-            created = resume.get("created_at", "")[:10] if resume.get("created_at") else "-"
+    with check_col:
+        is_selected = resume_id in st.session_state.get("selected_resumes", set())
+        if st.checkbox("", value=is_selected, key=f"check_{resume_id}", label_visibility="collapsed"):
+            st.session_state.selected_resumes.add(resume_id)
+        else:
+            st.session_state.selected_resumes.discard(resume_id)
 
-            primary_badge = " ⭐主简历" if is_primary else ""
-            st.markdown(f"**{name}**{primary_badge}")
-            st.caption(f"{file_type} · {created}")
+    with content_col:
+        # 卡片容器
+        with st.container():
+            col1, col2 = st.columns([3, 1])
 
-            # 画像信息
-            if profile:
-                position = profile.get("current_position", "-") or "-"
-                exp = profile.get("experience_years", "-") or "-"
-                st.caption(f"{position} · {exp}年经验")
+            with col1:
+                # 基本信息
+                name = resume.get("name", "未命名简历")
+                file_type = resume.get("file_type", "-").upper()
+                created = resume.get("created_at", "")[:10] if resume.get("created_at") else "-"
 
-        with col2:
-            st.caption("")  # spacer
+                primary_badge = " ⭐主简历" if is_primary else ""
+                st.markdown(f"**{name}**{primary_badge}")
+                st.caption(f"{file_type} · {created}")
 
-        # 操作按钮
-        btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
+                # 画像信息
+                if profile:
+                    position = profile.get("current_position", "-") or "-"
+                    exp = profile.get("experience_years", "-") or "-"
+                    st.caption(f"{position} · {exp}年经验")
 
-        with btn_col1:
-            if st.button("查看", key=f"view_{resume_id}", use_container_width=True):
-                st.session_state._view_resume_id = resume_id
-                st.rerun()
+            with col2:
+                st.caption("")  # spacer
 
-        with btn_col2:
-            if st.button("编辑", key=f"edit_{resume_id}", use_container_width=True):
-                st.session_state._edit_resume_id = resume_id
-                st.rerun()
+            # 操作按钮
+            btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
 
-        with btn_col3:
-            if not is_primary:
-                if st.button("设为主简历", key=f"primary_{resume_id}", use_container_width=True):
-                    result = set_primary_resume(resume_id)
-                    if result.get("success"):
-                        st.session_state._resume_msg = ("success", "设置成功")
-                        if "_resume_list_cache" in st.session_state:
-                            del st.session_state._resume_list_cache
-                    else:
-                        st.session_state._resume_msg = ("error", result.get("error", "设置失败"))
+            with btn_col1:
+                if st.button("查看", key=f"view_{resume_id}", use_container_width=True):
+                    st.session_state._view_resume_id = resume_id
                     st.rerun()
 
-        with btn_col4:
-            if st.button("删除", key=f"del_{resume_id}", use_container_width=True):
-                st.session_state._confirm_delete = resume_id
-                st.rerun()
-
-        # 删除确认
-        if st.session_state.get("_confirm_delete") == resume_id:
-            st.warning(f"确认删除 '{resume.get('name')}'？")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("确认", key=f"confirm_{resume_id}"):
-                    result = delete_resume(resume_id)
-                    if result.get("success"):
-                        st.session_state._resume_msg = ("success", "删除成功")
-                        if "_resume_list_cache" in st.session_state:
-                            del st.session_state._resume_list_cache
-                    else:
-                        st.session_state._resume_msg = ("error", result.get("error", "删除失败"))
-                    del st.session_state._confirm_delete
-                    st.rerun()
-            with c2:
-                if st.button("取消", key=f"cancel_{resume_id}"):
-                    del st.session_state._confirm_delete
+            with btn_col2:
+                if st.button("编辑", key=f"edit_{resume_id}", use_container_width=True):
+                    st.session_state._edit_resume_id = resume_id
                     st.rerun()
 
-        st.divider()
+            with btn_col3:
+                if not is_primary:
+                    if st.button("设为主简历", key=f"primary_{resume_id}", use_container_width=True):
+                        result = set_primary_resume(resume_id)
+                        if result.get("success"):
+                            st.session_state._resume_msg = ("success", "设置成功")
+                            if "_resume_list_cache" in st.session_state:
+                                del st.session_state._resume_list_cache
+                        else:
+                            st.session_state._resume_msg = ("error", result.get("error", "设置失败"))
+                        st.rerun()
+
+            with btn_col4:
+                if st.button("删除", key=f"del_{resume_id}", use_container_width=True):
+                    st.session_state._confirm_delete = resume_id
+                    st.rerun()
+
+            # 删除确认
+            if st.session_state.get("_confirm_delete") == resume_id:
+                st.warning(f"确认删除 '{resume.get('name')}'？")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("确认", key=f"confirm_{resume_id}"):
+                        result = delete_resume(resume_id)
+                        if result.get("success"):
+                            st.session_state._resume_msg = ("success", "删除成功")
+                            if "_resume_list_cache" in st.session_state:
+                                del st.session_state._resume_list_cache
+                        else:
+                            st.session_state._resume_msg = ("error", result.get("error", "删除失败"))
+                        del st.session_state._confirm_delete
+                        st.rerun()
+                with c2:
+                    if st.button("取消", key=f"cancel_{resume_id}"):
+                        del st.session_state._confirm_delete
+                        st.rerun()
+
+            st.divider()
 
 
 def _render_upload_section():
