@@ -1,21 +1,22 @@
 """UI样式定义"""
 
-# 颜色系统
+# 颜色系统 - 改进对比度
 COLORS = {
-    "bg_deep": "#050508",
-    "bg_primary": "#0a0a0f",
-    "bg_card": "rgba(18, 18, 26, 0.8)",
-    "bg_glass": "rgba(255, 255, 255, 0.03)",
-    "text_primary": "#e4e4e7",
-    "text_secondary": "#a1a1aa",
-    "text_muted": "#71717a",
+    "bg_deep": "#0f0f14",          # 稍微亮一点的深色背景
+    "bg_primary": "#16161d",       # 主背景色
+    "bg_card": "rgba(30, 30, 40, 0.9)",  # 卡片背景
+    "bg_glass": "rgba(255, 255, 255, 0.05)",
+    "text_primary": "#ffffff",      # 纯白色主文字
+    "text_secondary": "#c4c4c8",   # 更亮的次要文字
+    "text_muted": "#9ca3af",       # 更亮的muted文字
+    "text_label": "#e5e7eb",       # 标签文字颜色
     "accent_electric": "#00d4ff",
     "accent_gold": "#fbbf24",
     "accent_green": "#4ade80",
     "accent_red": "#f87171",
     "accent_magenta": "#f472b6",
     "border_glow": "rgba(0, 212, 255, 0.3)",
-    "border_subtle": "rgba(255, 255, 255, 0.08)",
+    "border_subtle": "rgba(255, 255, 255, 0.12)",
 }
 
 # 全局CSS
@@ -24,42 +25,92 @@ GLOBAL_CSS = """
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
     :root {
-        --bg-deep: #050508;
-        --bg-primary: #0a0a0f;
-        --bg-card: rgba(18, 18, 26, 0.8);
-        --bg-glass: rgba(255, 255, 255, 0.03);
-        --text-primary: #e4e4e7;
-        --text-secondary: #a1a1aa;
-        --text-muted: #71717a;
+        --bg-deep: #0f0f14;
+        --bg-primary: #16161d;
+        --bg-card: rgba(30, 30, 40, 0.9);
+        --bg-glass: rgba(255, 255, 255, 0.05);
+        --text-primary: #ffffff;
+        --text-secondary: #c4c4c8;
+        --text-muted: #9ca3af;
+        --text-label: #e5e7eb;
         --accent-electric: #00d4ff;
         --accent-gold: #fbbf24;
         --accent-green: #4ade80;
         --accent-red: #f87171;
         --accent-magenta: #f472b6;
         --border-glow: rgba(0, 212, 255, 0.3);
-        --border-subtle: rgba(255, 255, 255, 0.08);
+        --border-subtle: rgba(255, 255, 255, 0.12);
     }
 
     .stApp {
-        background: var(--bg-deep);
+        background: var(--bg-deep) !important;
         font-family: 'DM Sans', sans-serif;
-        color: var(--text-primary);
+        color: var(--text-primary) !important;
     }
-
-    /* 隐藏默认侧边栏 */
-    [data-testid="stSidebar"] { display: none; }
 
     /* 主内容区 */
     [data-testid="stMainBlockContainer"] {
         max-width: 1200px !important;
-        margin: 0 auto !important;
         padding: 1.5rem !important;
     }
 
     /* 隐藏顶部和底部 */
     #MainMenu, header, footer, [data-testid="stStatusWidget"] { display: none; }
 
-    /* 按钮样式 */
+    /* ========== 文字标签样式 - 关键修复 ========== */
+
+    /* 所有label文字 */
+    label, .stMarkdown label, [data-testid="stWidgetLabel"] {
+        color: var(--text-label) !important;
+        font-weight: 500 !important;
+    }
+
+    /* Streamlit组件标签 */
+    .stTextInput > label, .stTextArea > label, .stSelectbox > label,
+    .stMultiSelect > label, .stNumberInput > label, .stCheckbox label {
+        color: var(--text-label) !important;
+    }
+
+    /* 段落和普通文字 */
+    p, span, div.stMarkdown {
+        color: var(--text-primary) !important;
+    }
+
+    /* 标题 */
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--text-primary) !important;
+    }
+
+    /* ========== 输入框样式 ========== */
+
+    .stTextInput input, .stTextArea textarea {
+        background: var(--bg-primary) !important;
+        border: 1px solid var(--border-subtle) !important;
+        color: var(--text-primary) !important;
+        border-radius: 8px !important;
+    }
+
+    .stTextInput input::placeholder, .stTextArea textarea::placeholder {
+        color: var(--text-muted) !important;
+    }
+
+    .stTextInput input:focus, .stTextArea textarea:focus {
+        border-color: var(--accent-electric) !important;
+        box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2) !important;
+    }
+
+    /* ========== 下拉选择框 ========== */
+    .stSelectbox div[data-baseweb="select"] > div {
+        background: var(--bg-primary) !important;
+        border-color: var(--border-subtle) !important;
+    }
+
+    .stMultiSelect div[data-baseweb="tag"] {
+        background: rgba(0, 212, 255, 0.15) !important;
+        color: var(--accent-electric) !important;
+    }
+
+    /* ========== 按钮样式 ========== */
     .stButton button {
         background: var(--bg-card) !important;
         border: 1px solid var(--accent-electric) !important;
@@ -71,7 +122,7 @@ GLOBAL_CSS = """
     }
 
     .stButton button:hover {
-        background: rgba(0,212,255,0.1) !important;
+        background: rgba(0,212,255,0.15) !important;
         box-shadow: 0 0 20px rgba(0,212,255,0.3) !important;
     }
 
@@ -81,38 +132,88 @@ GLOBAL_CSS = """
         color: var(--bg-deep) !important;
     }
 
-    /* 输入框样式 */
-    .stTextInput input, .stTextArea textarea {
-        background: var(--bg-primary) !important;
-        border: 1px solid var(--border-subtle) !important;
+    /* ========== 复选框 ========== */
+    .stCheckbox label {
         color: var(--text-primary) !important;
-        border-radius: 8px !important;
     }
 
-    .stTextInput input:focus {
-        border-color: var(--accent-electric) !important;
+    .stCheckbox div[data-testid="stMarkdownContainer"] p {
+        color: var(--text-primary) !important;
     }
 
-    /* 成功/错误提示 */
+    /* ========== 成功/错误提示 ========== */
     .stSuccess {
-        background: rgba(74,222,128,0.1) !important;
+        background: rgba(74,222,128,0.15) !important;
         border: 1px solid var(--accent-green) !important;
         color: var(--accent-green) !important;
         border-radius: 8px !important;
     }
 
     .stError {
-        background: rgba(248,113,113,0.1) !important;
+        background: rgba(248,113,113,0.15) !important;
         border: 1px solid var(--accent-red) !important;
         color: var(--accent-red) !important;
         border-radius: 8px !important;
     }
 
     .stInfo {
-        background: rgba(0,212,255,0.1) !important;
+        background: rgba(0,212,255,0.15) !important;
         border: 1px solid var(--accent-electric) !important;
         color: var(--accent-electric) !important;
         border-radius: 8px !important;
+    }
+
+    .stWarning {
+        background: rgba(251,191,36,0.15) !important;
+        border: 1px solid var(--accent-gold) !important;
+        color: var(--accent-gold) !important;
+        border-radius: 8px !important;
+    }
+
+    /* ========== Tabs 标签页 ========== */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.5rem !important;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background: var(--bg-card) !important;
+        color: var(--text-secondary) !important;
+        border-radius: 8px 8px 0 0 !important;
+        border: 1px solid var(--border-subtle) !important;
+        border-bottom: none !important;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        color: var(--accent-electric) !important;
+        border-color: var(--accent-electric) !important;
+    }
+
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        background: var(--bg-primary) !important;
+        color: var(--accent-electric) !important;
+        border-color: var(--accent-electric) !important;
+    }
+
+    /* ========== 表格 ========== */
+    .stDataFrame {
+        background: var(--bg-card) !important;
+    }
+
+    .stDataFrame table {
+        color: var(--text-primary) !important;
+    }
+
+    /* ========== 侧边栏样式 ========== */
+    [data-testid="stSidebar"] {
+        background: var(--bg-primary) !important;
+    }
+
+    [data-testid="stSidebar"] * {
+        color: var(--text-primary) !important;
+    }
+
+    [data-testid="stSidebar"] label {
+        color: var(--text-label) !important;
     }
 </style>
 """

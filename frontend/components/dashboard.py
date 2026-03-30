@@ -15,6 +15,23 @@ from .common import (
 )
 
 
+def _clear_resume_loading_states():
+    """清除resume相关的session state"""
+    keys_to_remove = [
+        "_resume_manager_loading",
+        "_resume_loading_message",
+        "_resume_action_type",
+        "_resume_action_id",
+        "_resume_list_cache",
+        "_edit_resume_id",
+        "_view_resume_id",
+    ]
+
+    for key in keys_to_remove:
+        if key in st.session_state:
+            del st.session_state[key]
+
+
 def render_dashboard():
     """渲染仪表盘"""
 
@@ -68,21 +85,25 @@ def render_dashboard():
 
     with col1:
         if render_action_button("搜索职位", "🔍", "quick_search"):
+            _clear_resume_loading_states()
             st.session_state.page = "search"
             st.rerun()
 
     with col2:
         if render_action_button("管理简历", "📄", "quick_resume"):
+            _clear_resume_loading_states()
             st.session_state.page = "resumes"
             st.rerun()
 
     with col3:
         if render_action_button("投递记录", "📊", "quick_apps"):
+            _clear_resume_loading_states()
             st.session_state.page = "applications"
             st.rerun()
 
     with col4:
         if render_action_button("消息中心", "💬", "quick_msgs"):
+            _clear_resume_loading_states()
             st.session_state.page = "messages"
             st.rerun()
 
@@ -92,6 +113,7 @@ def render_dashboard():
     render_section_header("一键求职", "自动搜索并投递匹配职位")
 
     if st.button("🚀 开始一键求职", type="primary", use_container_width=True):
+        _clear_resume_loading_states()
         st.session_state.page = "search"
         st.session_state.auto_start = True
         st.rerun()
@@ -111,6 +133,7 @@ def render_dashboard():
             })
 
         if st.button("查看全部投递记录", key="view_all_apps"):
+            _clear_resume_loading_states()
             st.session_state.page = "applications"
             st.rerun()
     else:
