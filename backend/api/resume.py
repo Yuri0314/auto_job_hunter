@@ -19,6 +19,7 @@ router = APIRouter()
 class ParseResultResponse(BaseModel):
     """解析结果响应"""
     success: bool
+    resume_id: Optional[int] = None
     extracted_data: Optional[dict] = None
     resume_text: Optional[str] = None
     file_path: Optional[str] = None
