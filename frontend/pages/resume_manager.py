@@ -157,9 +157,9 @@ def _render_resume_list():
         st.info("暂无简历，请上传或粘贴简历内容")
         return
 
-    # 初始化选中状态
+    # 初始化选中状态（使用list，Streamlit不支持set序列化）
     if "selected_resumes" not in st.session_state:
-        st.session_state.selected_resumes = set()
+        st.session_state.selected_resumes = []
 
     # 工具栏
     col_t1, col_t2, col_t3, col_t4 = st.columns([1, 1, 1, 2])
@@ -167,12 +167,12 @@ def _render_resume_list():
     with col_t1:
         all_ids = [r.get("id") for r in resumes]
         if st.button("全选", key="select_all", use_container_width=True):
-            st.session_state.selected_resumes = set(all_ids)
+            st.session_state.selected_resumes = all_ids
             st.rerun()
 
     with col_t2:
         if st.button("取消全选", key="clear_selection", use_container_width=True):
-            st.session_state.selected_resumes = set()
+            st.session_state.selected_resumes = []
             st.rerun()
 
     with col_t3:
@@ -190,7 +190,7 @@ def _render_resume_list():
 
     # 批量删除确认弹窗
     if st.session_state.get("_show_batch_delete_confirm"):
-        selected_ids = list(st.session_state.selected_resumes)
+        selected_ids = st.session_state.selected_resumes
         st.warning(f"确认删除 {len(selected_ids)} 条简历？此操作不可撤销。")
         c1, c2 = st.columns(2)
         with c1:
@@ -199,7 +199,7 @@ def _render_resume_list():
                 if result.get("success"):
                     deleted = result.get("deleted", 0)
                     st.session_state._resume_msg = ("success", f"已删除 {deleted} 条简历")
-                    st.session_state.selected_resumes = set()
+                    st.session_state.selected_resumes = []
                     if "_resume_list_cache" in st.session_state:
                         del st.session_state._resume_list_cache
                 else:
@@ -233,11 +233,15 @@ def _render_resume_card(resume):
     check_col, content_col = st.columns([1, 4])
 
     with check_col:
-        is_selected = resume_id in st.session_state.get("selected_resumes", set())
-        if st.checkbox("", value=is_selected, key=f"check_{resume_id}", label_visibility="collapsed"):
-            st.session_state.selected_resumes.add(resume_id)
-        else:
-            st.session_state.selected_resumes.discard(resume_id)
+        selected = st.session_state.get("selected_resumes", [])
+        is_selected = resume_id in selected
+        new_state = st.checkbox("", value=is_selected, key=f"check_{resume_id}", label_visibility="collapsed")
+        if new_state != is_selected:
+            if new_state:
+                st.session_state.selected_resumes = selected + [resume_id]
+            else:
+                st.session_state.selected_resumes = [x for x in selected if x != resume_id]
+            st.rerun()
 
     with content_col:
         # 卡片容器
