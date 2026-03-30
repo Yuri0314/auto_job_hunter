@@ -130,16 +130,28 @@ def render_resume_manager():
             st.error(msg_text)
         del st.session_state._resume_msg
 
-    # Tabs 布局
-    tab1, tab2, tab3 = st.tabs(["简历列表", "上传简历", "粘贴文本"])
+    # 自定义Tab切换（支持程序化切换）
+    if "_active_tab" not in st.session_state:
+        st.session_state._active_tab = 0
 
-    with tab1:
+    tab_labels = ["简历列表", "上传简历", "粘贴文本"]
+    tab_cols = st.columns(3)
+    for i, (col, label) in enumerate(zip(tab_cols, tab_labels)):
+        with col:
+            is_active = st.session_state._active_tab == i
+            btn_type = "primary" if is_active else "secondary"
+            if st.button(label, key=f"tab_{i}", type=btn_type, use_container_width=True):
+                st.session_state._active_tab = i
+                st.rerun()
+
+    st.divider()
+
+    # 根据选中tab渲染内容
+    if st.session_state._active_tab == 0:
         _render_resume_list()
-
-    with tab2:
+    elif st.session_state._active_tab == 1:
         _render_upload_section()
-
-    with tab3:
+    else:
         _render_paste_section()
 
 
@@ -228,6 +240,19 @@ def _render_resume_card(resume):
     resume_id = resume.get("id")
     is_primary = resume.get("is_primary", False)
     profile = resume.get("profile") or {}
+
+    # 检查是否需要高亮（新解析的简历）
+    highlight_id = st.session_state.get("_highlight_resume")
+    is_highlighted = highlight_id == resume_id
+    if is_highlighted:
+        # 清除高亮状态（只高亮一次）
+        del st.session_state._highlight_resume
+        # 显示高亮边框
+        st.markdown("""
+        <div style="border: 2px solid #00d4ff; border-radius: 8px; padding: 8px; margin-bottom: 8px; background: rgba(0, 212, 255, 0.1);">
+            <span style="color: #00d4ff; font-size: 0.8rem;">✨ 新解析的简历</span>
+        </div>
+        """, unsafe_allow_html=True)
 
     # 复选框列
     check_col, content_col = st.columns([1, 4])
@@ -338,9 +363,13 @@ def _render_upload_section():
             with st.spinner("解析中..."):
                 result = upload_resume(uploaded_file, use_ai)
                 if result.get("success"):
-                    st.success("解析成功！")
+                    resume_id = result.get("resume_id")
+                    st.session_state._resume_msg = ("success", "简历解析成功！")
+                    st.session_state._active_tab = 0  # 跳转到简历列表
+                    st.session_state._highlight_resume = resume_id  # 高亮新简历
                     if "_resume_list_cache" in st.session_state:
                         del st.session_state._resume_list_cache
+                    st.rerun()
                 else:
                     st.error(f"解析失败: {result.get('error', '未知错误')}")
 
@@ -365,9 +394,13 @@ def _render_paste_section():
             with st.spinner("解析中..."):
                 result = parse_text_resume(text_content, use_ai)
                 if result.get("success"):
-                    st.success("解析成功！")
+                    resume_id = result.get("resume_id")
+                    st.session_state._resume_msg = ("success", "简历解析成功！")
+                    st.session_state._active_tab = 0  # 跳转到简历列表
+                    st.session_state._highlight_resume = resume_id  # 高亮新简历
                     if "_resume_list_cache" in st.session_state:
                         del st.session_state._resume_list_cache
+                    st.rerun()
                 else:
                     st.error(f"解析失败: {result.get('error', '未知错误')}")
 
