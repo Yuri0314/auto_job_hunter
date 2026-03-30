@@ -566,3 +566,30 @@ async def set_primary_resume(
     db.commit()
 
     return {"success": True, "message": f"已将 {resume.name} 设为主简历"}
+
+
+class BatchDeleteRequest(BaseModel):
+    """批量删除简历请求"""
+    ids: List[int]
+
+
+@router.post("/batch-delete")
+async def batch_delete_resumes(
+    request: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+):
+    """批量删除简历"""
+    from backend.core.database import Resume
+
+    if not request.ids:
+        return {"success": True, "deleted": 0}
+
+    deleted = 0
+    for resume_id in request.ids:
+        resume = db.query(Resume).filter(Resume.id == resume_id).first()
+        if resume:
+            db.delete(resume)
+            deleted += 1
+
+    db.commit()
+    return {"success": True, "deleted": deleted}
