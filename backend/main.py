@@ -74,7 +74,7 @@ def create_app() -> FastAPI:
     # 挂载 NiceGUI 前端
     try:
         from frontend_nicegui.app import setup_nicegui
-        setup_nicegui(app)
+        setup_nicegui(app, port=settings.port)
         logger.info("NiceGUI frontend mounted at /ui")
     except ImportError as e:
         logger.warning(f"NiceGUI not available: {e}")

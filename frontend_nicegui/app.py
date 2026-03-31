@@ -6,13 +6,14 @@ from fastapi import FastAPI
 
 from .styles import COLORS, GLOBAL_CSS
 from .layout import render_sidebar
+from .config import set_api_base
 
 
-def setup_nicegui(fastapi_app: FastAPI):
+def setup_nicegui(fastapi_app: FastAPI, port: int = 8000):
     """将 NiceGUI 挂载到 FastAPI 应用"""
 
-    # 全局样式在页面加载时应用
-    ui.add_head_html(GLOBAL_CSS)
+    # 设置API地址
+    set_api_base(port)
 
     # 定义页面路由
     @ui.page('/')

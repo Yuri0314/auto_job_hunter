@@ -4,7 +4,7 @@
 import httpx
 from nicegui import ui
 
-API_BASE = "http://localhost:8000/api"
+from ..config import API_BASE
 
 
 async def fetch_overview():
@@ -47,7 +47,7 @@ def render_dashboard():
                         for p in platforms:
                             render_status_indicator(
                                 p.get("platform", "").upper(),
-                                p.get("logged_in", False)
+                                p.get("cookie_saved", False)  # 使用cookie_saved字段判断
                             )
                     else:
                         ui.label("暂无平台数据").classes('text-[#9ca3af]')

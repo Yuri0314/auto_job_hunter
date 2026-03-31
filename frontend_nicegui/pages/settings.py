@@ -4,7 +4,7 @@
 import httpx
 from nicegui import ui
 
-API_BASE = "http://localhost:8000/api"
+from ..config import API_BASE
 
 
 async def fetch_platform_status():

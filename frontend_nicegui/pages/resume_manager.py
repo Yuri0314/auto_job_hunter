@@ -4,7 +4,7 @@
 import httpx
 from nicegui import ui, app
 
-API_BASE = "http://localhost:8000/api"
+from ..config import API_BASE
 
 
 async def fetch_resumes():

@@ -9,6 +9,14 @@ from backend.adapters import Platform
 router = APIRouter()
 
 
+def _check_platform_cookie(platform: str) -> bool:
+    """检查平台Cookie是否存在"""
+    from backend.automation.browser.cookie_manager import get_cookie_manager
+    cookie_manager = get_cookie_manager()
+    info = cookie_manager.get_cookie_info(platform)
+    return info is not None
+
+
 @router.get("/overview")
 async def get_dashboard_overview(user_id: int = 1):
     """获取仪表盘概览数据"""
@@ -22,12 +30,13 @@ async def get_dashboard_overview(user_id: int = 1):
             Application.created_at >= today_start
         ).count()
 
-        # 平台登录状态
+        # 平台登录状态 - 检查实际Cookie
         platform_status = []
         for platform in [Platform.BOSS, Platform.LIEPIN]:
             platform_status.append({
                 "platform": platform.value,
-                "logged_in": False,  # 实际应检查Cookie
+                "logged_in": False,  # 当前会话是否在线（需要浏览器验证）
+                "cookie_saved": _check_platform_cookie(platform.value),  # 是否有保存的Cookie
             })
 
         # 简历状态

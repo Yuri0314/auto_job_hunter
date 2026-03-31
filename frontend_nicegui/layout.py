@@ -2,7 +2,7 @@
 """布局模块 - 侧边栏导航"""
 
 from nicegui import ui, app
-from .styles import COLORS
+from .styles import COLORS, GLOBAL_CSS
 
 
 # 导航项配置
@@ -23,6 +23,9 @@ def navigate_to(page_id: str):
 
 def render_sidebar():
     """渲染侧边栏"""
+    # 添加全局样式（每个页面都需要）
+    ui.add_head_html(GLOBAL_CSS)
+
     with ui.left_drawer().classes(
         'w-56 bg-[#16161d] border-r border-[rgba(255,255,255,0.12)]'
     ) as drawer:
