@@ -89,5 +89,5 @@ test_result.json
 .playwright-mcp/
 .superpowers/
 
-# Superpowers docs (plans/specs are temporary)
-docs/superpowers/
+# Superpowers temporary plans (keep specs)
+docs/superpowers/plans/
