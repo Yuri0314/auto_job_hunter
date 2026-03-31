@@ -77,7 +77,7 @@ def _render_platform_login():
         container.clear()
         with container:
             ui.label("平台登录状态").classes('text-white font-semibold mb-2')
-            ui.label("点击"登录"后，在打开的浏览器窗口中完成登录").classes(
+            ui.label("点击\"登录\"后，在打开的浏览器窗口中完成登录").classes(
                 'text-[#9ca3af] text-sm mb-4'
             )
 
