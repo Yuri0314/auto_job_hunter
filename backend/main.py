@@ -71,6 +71,14 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(api_router, prefix="/api")
 
+    # 挂载 NiceGUI 前端
+    try:
+        from frontend_nicegui.app import setup_nicegui
+        setup_nicegui(app)
+        logger.info("NiceGUI frontend mounted at /ui")
+    except ImportError as e:
+        logger.warning(f"NiceGUI not available: {e}")
+
     return app
 
 
