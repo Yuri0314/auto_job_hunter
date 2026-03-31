@@ -66,7 +66,7 @@ def get_button_classes(variant: str = "primary"):
     return base + variants.get(variant, variants["primary"])
 
 
-# 全局 CSS 样式
+# 全局 CSS 样式 - Obsidian Terminal 暗黑科技风格
 GLOBAL_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
@@ -79,21 +79,70 @@ GLOBAL_CSS = """
         --accent-gold: #fbbf24;
         --text-primary: #f4f4f5;
         --text-secondary: #c4c4c8;
+        --text-muted: #71717a;
         --border-default: rgba(255, 255, 255, 0.12);
+    }
+
+    /* 强制暗黑背景 - 覆盖 Quasar 默认 */
+    html, body, .q-page, .q-layout, main, .q-drawer-container {
+        background: var(--bg-primary) !important;
+        background-color: var(--bg-primary) !important;
     }
 
     body {
         font-family: 'DM Sans', sans-serif;
-        background: var(--bg-primary) !important;
         color: var(--text-primary) !important;
     }
 
-    /* NiceGUI 组件覆盖 */
+    /* NiceGUI 侧边栏 */
     .q-drawer {
         background: var(--bg-secondary) !important;
+        border-right: 1px solid var(--border-default) !important;
     }
 
+    .q-drawer .q-item {
+        color: var(--text-secondary) !important;
+    }
+
+    .q-drawer .q-item:hover {
+        background: rgba(255, 255, 255, 0.05) !important;
+    }
+
+    /* 卡片样式 */
     .q-card {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border-default) !important;
+        color: var(--text-primary) !important;
+    }
+
+    /* 标签/文字 */
+    .q-label, label, .q-item-label, .q-tab__label {
+        color: var(--text-primary) !important;
+    }
+
+    /* Tab 样式 */
+    .q-tabs {
+        background: transparent !important;
+    }
+
+    .q-tab {
+        color: var(--text-secondary) !important;
+    }
+
+    .q-tab--active .q-tab__label {
+        color: var(--accent-blue) !important;
+    }
+
+    /* 输入框 */
+    .q-field__label {
+        color: var(--text-secondary) !important;
+    }
+
+    .q-input, .q-select, .q-field {
+        color: var(--text-primary) !important;
+    }
+
+    .q-field__control {
         background: var(--bg-card) !important;
         border: 1px solid var(--border-default) !important;
     }
@@ -120,6 +169,17 @@ GLOBAL_CSS = """
     /* 隐藏 Quasar 默认头部 */
     .q-header {
         display: none !important;
+    }
+
+    /* Badge 样式 */
+    .q-badge {
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+
+    /* Alert/通知 */
+    .q-notification {
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border-default) !important;
     }
 </style>
 """

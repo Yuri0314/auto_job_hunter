@@ -4,18 +4,15 @@
 from nicegui import ui, app
 from fastapi import FastAPI
 
-from .styles import GLOBAL_CSS
+from .styles import COLORS, GLOBAL_CSS
 from .layout import render_sidebar
 
 
 def setup_nicegui(fastapi_app: FastAPI):
     """将 NiceGUI 挂载到 FastAPI 应用"""
 
-    # 使用 on_startup 应用全局样式（避免 "outside page context" 警告）
-    @app.on_startup
-    def apply_global_styles():
-        ui.add_head_html(GLOBAL_CSS)
-        ui.dark = True
+    # 全局样式在页面加载时应用
+    ui.add_head_html(GLOBAL_CSS)
 
     # 定义页面路由
     @ui.page('/')
@@ -59,10 +56,11 @@ def setup_nicegui(fastapi_app: FastAPI):
         from .pages.settings import render_settings_page
         render_settings_page()
 
-    # 挂载到 FastAPI
+    # 挂载到 FastAPI，启用暗黑模式
     ui.run_with(
         fastapi_app,
         mount_path='/ui',
         title='Auto Job Hunter',
         favicon='⚡',
+        dark=True,
     )
