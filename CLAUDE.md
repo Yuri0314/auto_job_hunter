@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **核心架构：**
 ```
-Frontend (Streamlit)
-    ↓ HTTP
+Frontend (NiceGUI @ /ui)
+    ↓ 同进程调用
 Backend (FastAPI)
     ↓
 Orchestrator (主协调器)
@@ -29,14 +29,18 @@ playwright install chromium
 # 初始化数据库
 python run.py init
 
-# 启动服务
-python run.py web              # FastAPI后端 (port 8000)
-streamlit run frontend/app.py  # 前端GUI (port 8501)
-python run.py gui              # 一键启动后端+前端
+# 启动服务（FastAPI + NiceGUI 单服务）
+python run.py web              # 后端服务 (port 8000)
+python run.py gui              # 一键启动并打开浏览器
 
 # CLI使用
 python run.py search -k "Python后端" -p boss liepin -c 北京
 python run.py search -k "Python" -p boss --ai -a  # AI模式+自动投递
+
+# 访问地址
+http://localhost:8000/ui       # NiceGUI 前端
+http://localhost:8000/api/*    # API 端点
+http://localhost:8000/docs     # API 文档
 
 # 测试
 pytest tests/
@@ -81,22 +85,15 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 ```
 
-## Streamlit Loading模式
+## NiceGUI 前端
 
-显示loading时必须用全局状态完全遮挡旧内容，否则旧按钮仍可点击：
+前端使用 NiceGUI 框架，挂载在 `/ui` 路径下。主要页面：
+- `/ui/dashboard` - 仪表盘
+- `/ui/resumes` - 简历管理
+- `/ui/search` - 职位搜索
+- `/ui/settings` - 系统设置
 
-```python
-if st.session_state.loading:
-    # 全屏loading遮挡，不渲染任何其他内容
-    st.markdown("<div style='position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999'>...</div>")
-    # 执行任务
-    st.session_state.loading = False
-    st.rerun()
-else:
-    # 正常渲染页面
-```
-
-**不要用 `st.spinner()`** - 它无法阻止旧内容渲染。
+**注意:** NiceGUI 页面函数在 `@ui.page()` 装饰器内部执行，UI 元素必须在页面上下文中创建。
 
 ## 前端设计风格
 
