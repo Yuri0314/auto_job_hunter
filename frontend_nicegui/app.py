@@ -4,15 +4,18 @@
 from nicegui import ui, app
 from fastapi import FastAPI
 
-from .styles import apply_styles
+from .styles import GLOBAL_CSS
 from .layout import render_sidebar
 
 
 def setup_nicegui(fastapi_app: FastAPI):
     """将 NiceGUI 挂载到 FastAPI 应用"""
 
-    # 应用全局样式（仅添加 CSS，不创建 UI 元素）
-    apply_styles()
+    # 使用 on_startup 应用全局样式（避免 "outside page context" 警告）
+    @app.on_startup
+    def apply_global_styles():
+        ui.add_head_html(GLOBAL_CSS)
+        ui.dark = True
 
     # 定义页面路由
     @ui.page('/')
