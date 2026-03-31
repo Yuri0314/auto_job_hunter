@@ -9,14 +9,14 @@
 - ✅ 多平台支持：BOSS直聘、猎聘、脉脉
 - ✅ 浏览器自动化：Playwright + 反检测
 - ✅ Cookie持久化：自动登录状态管理
-- ✅ Web GUI管理界面：Streamlit + FastAPI
+- ✅ Web GUI管理界面：NiceGUI + FastAPI
 
 ## 技术栈
 
 - **后端**: FastAPI + SQLAlchemy
 - **AI框架**: LangChain (可选) / OpenAI API
 - **浏览器自动化**: Playwright + Stealth
-- **前端**: Streamlit
+- **前端**: NiceGUI
 - **数据库**: SQLite (开发) + PostgreSQL (生产)
 - **任务调度**: APScheduler
 
@@ -42,8 +42,8 @@ auto_job_hunter/
 │   ├── services/           # 业务服务
 │   │   └── orchestrator.py # 主协调器
 │   └── main.py             # 应用入口
-├── frontend/               # 前端应用
-│   └── app.py              # Streamlit应用
+├── frontend_nicegui/       # 前端应用
+│   └── app.py              # NiceGUI应用入口
 ├── docs/                   # 项目文档
 ├── requirements.txt        # Python依赖
 └── README.md              # 项目说明
@@ -112,13 +112,11 @@ cp .env.example .env
 
 ### 启动方式
 
-**方式一：Web界面**
+**方式一：Web界面（推荐）**
 ```bash
-# 启动后端API服务
-python run.py web
-
-# 新终端启动前端
-streamlit run frontend/app.py
+# 一键启动后端+前端
+python run.py gui
+# 浏览器自动打开 http://localhost:8000/ui
 ```
 
 **方式二：命令行搜索**
