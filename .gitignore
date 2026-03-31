@@ -84,3 +84,10 @@ cookies/
 
 # Test results
 test_result.json
+
+# MCP tool directories
+.playwright-mcp/
+.superpowers/
+
+# Superpowers docs (plans/specs are temporary)
+docs/superpowers/

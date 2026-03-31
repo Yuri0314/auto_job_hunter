@@ -2,6 +2,7 @@
 简历管理前端组件 - 简化版
 
 移除了复杂的loading状态管理，使用同步渲染
+状态变量使用命名空间 resume.xxx，便于统一清理
 """
 
 import os
@@ -10,6 +11,19 @@ import requests
 from datetime import datetime
 
 API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000/api")
+
+
+# ========== 状态变量命名规范 ==========
+# 本页面所有session_state变量使用 resume.xxx 命名空间
+# - resume.active_tab: 当前tab索引 (0=列表, 1=上传, 2=粘贴)
+# - resume.list_cache: 简历列表缓存
+# - resume.selected_ids: 选中的简历ID列表
+# - resume.highlight_id: 需要高亮的简历ID
+# - resume.view_id: 查看详情的简历ID
+# - resume.edit_id: 编辑详情的简历ID
+# - resume.confirm_delete_id: 待删除确认的简历ID
+# - resume.show_batch_delete: 批量删除确认弹窗状态
+# - resume.msg: 消息提示 (type, text)
 
 
 # ========== API Functions ==========
@@ -104,6 +118,30 @@ def update_resume_profile(resume_id, profile_data):
         return {"success": False, "error": str(e)}
 
 
+# ========== Helper Functions ==========
+
+def _get_state(key: str, default=None):
+    """获取命名空间状态"""
+    return st.session_state.get(f"resume.{key}", default)
+
+
+def _set_state(key: str, value):
+    """设置命名空间状态"""
+    st.session_state[f"resume.{key}"] = value
+
+
+def _del_state(key: str):
+    """删除命名空间状态"""
+    full_key = f"resume.{key}"
+    if full_key in st.session_state:
+        del st.session_state[full_key]
+
+
+def _clear_list_cache():
+    """清除列表缓存"""
+    _del_state("list_cache")
+
+
 # ========== Main Render Function ==========
 
 def render_resume_manager():
@@ -122,34 +160,35 @@ def render_resume_manager():
     """, unsafe_allow_html=True)
 
     # 处理消息提示
-    if "_resume_msg" in st.session_state:
-        msg_type, msg_text = st.session_state._resume_msg
+    msg = _get_state("msg")
+    if msg:
+        msg_type, msg_text = msg
         if msg_type == "success":
             st.success(msg_text)
         else:
             st.error(msg_text)
-        del st.session_state._resume_msg
+        _del_state("msg")
 
     # 自定义Tab切换（支持程序化切换）
-    if "_active_tab" not in st.session_state:
-        st.session_state._active_tab = 0
+    if _get_state("active_tab") is None:
+        _set_state("active_tab", 0)
 
     tab_labels = ["简历列表", "上传简历", "粘贴文本"]
     tab_cols = st.columns(3)
     for i, (col, label) in enumerate(zip(tab_cols, tab_labels)):
         with col:
-            is_active = st.session_state._active_tab == i
+            is_active = _get_state("active_tab") == i
             btn_type = "primary" if is_active else "secondary"
             if st.button(label, key=f"tab_{i}", type=btn_type, use_container_width=True):
-                st.session_state._active_tab = i
+                _set_state("active_tab", i)
                 st.rerun()
 
     st.divider()
 
     # 根据选中tab渲染内容
-    if st.session_state._active_tab == 0:
+    if _get_state("active_tab") == 0:
         _render_resume_list()
-    elif st.session_state._active_tab == 1:
+    elif _get_state("active_tab") == 1:
         _render_upload_section()
     else:
         _render_paste_section()
@@ -159,10 +198,10 @@ def _render_resume_list():
     """渲染简历列表"""
 
     # 获取简历列表（带缓存）
-    if "_resume_list_cache" not in st.session_state:
-        st.session_state._resume_list_cache = fetch_resume_list()
+    if _get_state("list_cache") is None:
+        _set_state("list_cache", fetch_resume_list())
 
-    data = st.session_state._resume_list_cache
+    data = _get_state("list_cache")
     resumes = data.get("items", [])
 
     if not resumes:
@@ -170,8 +209,8 @@ def _render_resume_list():
         return
 
     # 初始化选中状态（使用list，Streamlit不支持set序列化）
-    if "selected_resumes" not in st.session_state:
-        st.session_state.selected_resumes = []
+    if _get_state("selected_ids") is None:
+        _set_state("selected_ids", [])
 
     # 工具栏
     col_t1, col_t2, col_t3, col_t4 = st.columns([1, 1, 1, 2])
@@ -179,30 +218,29 @@ def _render_resume_list():
     with col_t1:
         all_ids = [r.get("id") for r in resumes]
         if st.button("全选", key="select_all", use_container_width=True):
-            st.session_state.selected_resumes = all_ids
+            _set_state("selected_ids", all_ids)
             st.rerun()
 
     with col_t2:
         if st.button("取消全选", key="clear_selection", use_container_width=True):
-            st.session_state.selected_resumes = []
+            _set_state("selected_ids", [])
             st.rerun()
 
     with col_t3:
-        selected_count = len(st.session_state.selected_resumes)
-        if selected_count > 0:
-            if st.button(f"批量删除 ({selected_count})", key="batch_delete_btn", use_container_width=True):
-                st.session_state._show_batch_delete_confirm = True
+        selected_ids = _get_state("selected_ids", [])
+        if len(selected_ids) > 0:
+            if st.button(f"批量删除 ({len(selected_ids)})", key="batch_delete_btn", use_container_width=True):
+                _set_state("show_batch_delete", True)
                 st.rerun()
 
     with col_t4:
         if st.button("刷新列表", key="refresh_list", use_container_width=True):
-            if "_resume_list_cache" in st.session_state:
-                del st.session_state._resume_list_cache
+            _clear_list_cache()
             st.rerun()
 
     # 批量删除确认弹窗
-    if st.session_state.get("_show_batch_delete_confirm"):
-        selected_ids = st.session_state.selected_resumes
+    if _get_state("show_batch_delete"):
+        selected_ids = _get_state("selected_ids", [])
         st.warning(f"确认删除 {len(selected_ids)} 条简历？此操作不可撤销。")
         c1, c2 = st.columns(2)
         with c1:
@@ -210,17 +248,16 @@ def _render_resume_list():
                 result = batch_delete_resumes(selected_ids)
                 if result.get("success"):
                     deleted = result.get("deleted", 0)
-                    st.session_state._resume_msg = ("success", f"已删除 {deleted} 条简历")
-                    st.session_state.selected_resumes = []
-                    if "_resume_list_cache" in st.session_state:
-                        del st.session_state._resume_list_cache
+                    _set_state("msg", ("success", f"已删除 {deleted} 条简历"))
+                    _set_state("selected_ids", [])
+                    _clear_list_cache()
                 else:
-                    st.session_state._resume_msg = ("error", result.get("error", "删除失败"))
-                del st.session_state._show_batch_delete_confirm
+                    _set_state("msg", ("error", result.get("error", "删除失败")))
+                _del_state("show_batch_delete")
                 st.rerun()
         with c2:
             if st.button("取消", key="cancel_batch_delete"):
-                del st.session_state._show_batch_delete_confirm
+                _del_state("show_batch_delete")
                 st.rerun()
 
     # 显示简历卡片
@@ -228,11 +265,11 @@ def _render_resume_list():
         _render_resume_card(resume)
 
     # 处理模态框
-    if st.session_state.get("_view_resume_id"):
-        _render_detail_modal(st.session_state._view_resume_id, readonly=True)
+    if _get_state("view_id"):
+        _render_detail_modal(_get_state("view_id"), readonly=True)
 
-    if st.session_state.get("_edit_resume_id"):
-        _render_detail_modal(st.session_state._edit_resume_id, readonly=False)
+    if _get_state("edit_id"):
+        _render_detail_modal(_get_state("edit_id"), readonly=False)
 
 
 def _render_resume_card(resume):
@@ -242,11 +279,11 @@ def _render_resume_card(resume):
     profile = resume.get("profile") or {}
 
     # 检查是否需要高亮（新解析的简历）
-    highlight_id = st.session_state.get("_highlight_resume")
+    highlight_id = _get_state("highlight_id")
     is_highlighted = highlight_id == resume_id
     if is_highlighted:
         # 清除高亮状态（只高亮一次）
-        del st.session_state._highlight_resume
+        _del_state("highlight_id")
         # 显示高亮边框
         st.markdown("""
         <div style="border: 2px solid #00d4ff; border-radius: 8px; padding: 8px; margin-bottom: 8px; background: rgba(0, 212, 255, 0.1);">
@@ -258,14 +295,14 @@ def _render_resume_card(resume):
     check_col, content_col = st.columns([1, 4])
 
     with check_col:
-        selected = st.session_state.get("selected_resumes", [])
-        is_selected = resume_id in selected
+        selected_ids = _get_state("selected_ids", [])
+        is_selected = resume_id in selected_ids
         new_state = st.checkbox("", value=is_selected, key=f"check_{resume_id}", label_visibility="collapsed")
         if new_state != is_selected:
             if new_state:
-                st.session_state.selected_resumes = selected + [resume_id]
+                _set_state("selected_ids", selected_ids + [resume_id])
             else:
-                st.session_state.selected_resumes = [x for x in selected if x != resume_id]
+                _set_state("selected_ids", [x for x in selected_ids if x != resume_id])
             st.rerun()
 
     with content_col:
@@ -297,12 +334,12 @@ def _render_resume_card(resume):
 
             with btn_col1:
                 if st.button("查看", key=f"view_{resume_id}", use_container_width=True):
-                    st.session_state._view_resume_id = resume_id
+                    _set_state("view_id", resume_id)
                     st.rerun()
 
             with btn_col2:
                 if st.button("编辑", key=f"edit_{resume_id}", use_container_width=True):
-                    st.session_state._edit_resume_id = resume_id
+                    _set_state("edit_id", resume_id)
                     st.rerun()
 
             with btn_col3:
@@ -310,36 +347,34 @@ def _render_resume_card(resume):
                     if st.button("设为主简历", key=f"primary_{resume_id}", use_container_width=True):
                         result = set_primary_resume(resume_id)
                         if result.get("success"):
-                            st.session_state._resume_msg = ("success", "设置成功")
-                            if "_resume_list_cache" in st.session_state:
-                                del st.session_state._resume_list_cache
+                            _set_state("msg", ("success", "设置成功"))
+                            _clear_list_cache()
                         else:
-                            st.session_state._resume_msg = ("error", result.get("error", "设置失败"))
+                            _set_state("msg", ("error", result.get("error", "设置失败")))
                         st.rerun()
 
             with btn_col4:
                 if st.button("删除", key=f"del_{resume_id}", use_container_width=True):
-                    st.session_state._confirm_delete = resume_id
+                    _set_state("confirm_delete_id", resume_id)
                     st.rerun()
 
             # 删除确认
-            if st.session_state.get("_confirm_delete") == resume_id:
+            if _get_state("confirm_delete_id") == resume_id:
                 st.warning(f"确认删除 '{resume.get('name')}'？")
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("确认", key=f"confirm_{resume_id}"):
                         result = delete_resume(resume_id)
                         if result.get("success"):
-                            st.session_state._resume_msg = ("success", "删除成功")
-                            if "_resume_list_cache" in st.session_state:
-                                del st.session_state._resume_list_cache
+                            _set_state("msg", ("success", "删除成功"))
+                            _clear_list_cache()
                         else:
-                            st.session_state._resume_msg = ("error", result.get("error", "删除失败"))
-                        del st.session_state._confirm_delete
+                            _set_state("msg", ("error", result.get("error", "删除失败")))
+                        _del_state("confirm_delete_id")
                         st.rerun()
                 with c2:
                     if st.button("取消", key=f"cancel_{resume_id}"):
-                        del st.session_state._confirm_delete
+                        _del_state("confirm_delete_id")
                         st.rerun()
 
             st.divider()
@@ -364,11 +399,10 @@ def _render_upload_section():
                 result = upload_resume(uploaded_file, use_ai)
                 if result.get("success"):
                     resume_id = result.get("resume_id")
-                    st.session_state._resume_msg = ("success", "简历解析成功！")
-                    st.session_state._active_tab = 0  # 跳转到简历列表
-                    st.session_state._highlight_resume = resume_id  # 高亮新简历
-                    if "_resume_list_cache" in st.session_state:
-                        del st.session_state._resume_list_cache
+                    _set_state("msg", ("success", "简历解析成功！"))
+                    _set_state("active_tab", 0)  # 跳转到简历列表
+                    _set_state("highlight_id", resume_id)  # 高亮新简历
+                    _clear_list_cache()
                     st.rerun()
                 else:
                     st.error(f"解析失败: {result.get('error', '未知错误')}")
@@ -395,11 +429,10 @@ def _render_paste_section():
                 result = parse_text_resume(text_content, use_ai)
                 if result.get("success"):
                     resume_id = result.get("resume_id")
-                    st.session_state._resume_msg = ("success", "简历解析成功！")
-                    st.session_state._active_tab = 0  # 跳转到简历列表
-                    st.session_state._highlight_resume = resume_id  # 高亮新简历
-                    if "_resume_list_cache" in st.session_state:
-                        del st.session_state._resume_list_cache
+                    _set_state("msg", ("success", "简历解析成功！"))
+                    _set_state("active_tab", 0)  # 跳转到简历列表
+                    _set_state("highlight_id", resume_id)  # 高亮新简历
+                    _clear_list_cache()
                     st.rerun()
                 else:
                     st.error(f"解析失败: {result.get('error', '未知错误')}")
@@ -412,8 +445,8 @@ def _render_detail_modal(resume_id: int, readonly: bool = False):
     if not detail:
         st.error("加载失败")
         if st.button("关闭", key=f"close_err_{resume_id}"):
-            st.session_state._view_resume_id = None
-            st.session_state._edit_resume_id = None
+            _del_state("view_id")
+            _del_state("edit_id")
             st.rerun()
         return
 
@@ -452,15 +485,14 @@ def _render_detail_modal(resume_id: int, readonly: bool = False):
                 result = update_resume_profile(resume_id, profile_data)
                 if result.get("success"):
                     st.success("保存成功")
-                    st.session_state._edit_resume_id = None
-                    if "_resume_list_cache" in st.session_state:
-                        del st.session_state._resume_list_cache
+                    _del_state("edit_id")
+                    _clear_list_cache()
                     st.rerun()
                 else:
                     st.error(f"保存失败: {result.get('error')}")
 
     with c2:
         if st.button("关闭", key=f"close_detail_{resume_id}"):
-            st.session_state._view_resume_id = None
-            st.session_state._edit_resume_id = None
+            _del_state("view_id")
+            _del_state("edit_id")
             st.rerun()

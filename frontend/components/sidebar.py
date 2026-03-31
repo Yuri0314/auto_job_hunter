@@ -3,11 +3,11 @@
 import streamlit as st
 
 
-# 导航项定义
+# 导航项定义 (顺序符合用户逻辑: 先简历→再搜索→再投递)
 NAV_ITEMS = [
     {"id": "dashboard", "label": "仪表盘", "icon": "🏠"},
-    {"id": "search", "label": "搜索职位", "icon": "🔍"},
     {"id": "resumes", "label": "管理简历", "icon": "📄"},
+    {"id": "search", "label": "搜索职位", "icon": "🔍"},
     {"id": "applications", "label": "投递记录", "icon": "📊"},
     {"id": "messages", "label": "消息中心", "icon": "💬"},
     {"id": "settings", "label": "设置", "icon": "⚙️"},
@@ -82,9 +82,24 @@ def render_sidebar():
 
 
 def _clear_loading_states():
-    """清除resume相关的session state"""
-    # 只清除可能卡住的状态键
-    keys_to_remove = [
+    """清除所有页面的session state，使用命名空间批量清理"""
+
+    # 定义每个页面的命名空间前缀
+    # 页面状态变量应该使用命名空间，如: resume.xxx, search.xxx
+    namespaces = ["resume", "search", "application", "message"]
+
+    # 需要清理的key列表（支持新旧两种命名方式）
+    keys_to_remove = []
+
+    # 1. 清理命名空间下的变量 (新格式: resume.xxx)
+    for ns in namespaces:
+        keys_to_remove.extend([
+            k for k in st.session_state.keys()
+            if k.startswith(f"{ns}.")
+        ])
+
+    # 2. 清理旧格式变量 (兼容: _xxx 或 xxx 不带命名空间)
+    legacy_keys = [
         "_resume_manager_loading",
         "_resume_loading_message",
         "_resume_action_type",
@@ -96,8 +111,19 @@ def _clear_loading_states():
         "_edit_resume_id",
         "_view_resume_id",
         "_confirm_delete",
+        "_active_tab",
+        "selected_resumes",
+        "_highlight_resume",
+        "_resume_msg",
+        "_show_batch_delete_confirm",
+        "_search_results",
+        "_search_keywords",
+        "loading",
+        "loading_message",
     ]
+    keys_to_remove.extend([k for k in legacy_keys if k in st.session_state])
 
+    # 执行清理
     for key in keys_to_remove:
         if key in st.session_state:
             del st.session_state[key]
