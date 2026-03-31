@@ -17,10 +17,6 @@ def setup_nicegui(fastapi_app: FastAPI, port: int = 8000):
 
     # 定义页面路由
     @ui.page('/')
-    def index():
-        """首页 - 重定向到仪表盘"""
-        ui.navigate.to('/dashboard')
-
     @ui.page('/dashboard')
     def dashboard_page():
         render_sidebar()
