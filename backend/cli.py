@@ -117,21 +117,21 @@ def run_gui(port: int = 8000, no_browser: bool = False):
         print(f"\n[警告] 端口 {port} 已被占用，服务可能已在运行")
         print("  如需重启，请先关闭旧进程: taskkill /F /IM python.exe")
         print("  或使用不同端口: python run.py gui --port 8080")
-        print(f"\n请在浏览器访问: http://localhost:{port}/ui")
+        print(f"\n请在浏览器访问: http://localhost:{port}/ui/dashboard")
         return
 
     try:
         print(f"\n启动服务 (端口 {port})...")
 
         # 打开浏览器
-        ui_url = f"http://localhost:{port}/ui"
+        ui_url = f"http://localhost:{port}/ui/dashboard"
         if not no_browser:
             print(f"正在打开浏览器: {ui_url}")
             webbrowser.open(ui_url)
 
         print("\n" + "=" * 50)
         print("服务已启动!")
-        print(f"  NiceGUI界面: {ui_url}")
+        print(f"  NiceGUI界面: http://localhost:{port}/ui/dashboard")
         print(f"  API文档:     http://localhost:{port}/docs")
         print("=" * 50)
         print("\n按 Ctrl+C 停止服务...")

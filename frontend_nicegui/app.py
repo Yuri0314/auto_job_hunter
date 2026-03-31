@@ -16,7 +16,6 @@ def setup_nicegui(fastapi_app: FastAPI, port: int = 8000):
     set_api_base(port)
 
     # 定义页面路由
-    @ui.page('/')
     @ui.page('/dashboard')
     def dashboard_page():
         render_sidebar()
