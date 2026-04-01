@@ -82,11 +82,15 @@ async def run_web(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    # 添加frontend_nicegui到reload监控目录
+    reload_dirs = ["backend", "frontend_nicegui"] if reload else None
+
     uvicorn.run(
         "backend.main:app",
         host=host,
         port=port,
         reload=reload,
+        reload_dirs=reload_dirs,
     )
 
 

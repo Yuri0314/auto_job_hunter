@@ -10,7 +10,7 @@ from ..config import API_BASE
 async def search_jobs_api(keywords: str, platforms: list, city: str = None, auto_apply: bool = False):
     """调用搜索 API"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(http2=False, trust_env=False) as client:
             r = await client.post(
                 f"{API_BASE}/applications/search-and-apply",
                 json={

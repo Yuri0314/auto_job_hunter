@@ -10,7 +10,7 @@ from ..config import API_BASE
 async def fetch_overview():
     """获取仪表盘概览数据"""
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(http2=False, trust_env=False) as client:
             r = await client.get(f"{API_BASE}/dashboard/overview", timeout=10)
             if r.is_success:
                 return r.json()
