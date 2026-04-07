@@ -63,12 +63,8 @@ class PlaywrightManager:
         if self.proxy:
             launch_args.append(f"--proxy-server={self.proxy}")
 
-        self._browser = await self._playwright.chromium.launch(
-            headless=self.headless,
-            args=launch_args,
-        )
-
-        # 创建上下文
+        # 使用 launch_persistent_context 启动持久化浏览器
+        # 这样浏览器会复用用户数据目录，Cookie 和会话都会保留
         context_options = {
             "viewport": {"width": 1920, "height": 1080},
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -76,10 +72,27 @@ class PlaywrightManager:
             "timezone_id": "Asia/Shanghai",
         }
 
-        self._context = await self._browser.new_context(**context_options)
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=self.user_data_dir,
+            headless=self.headless,
+            args=launch_args,
+            **context_options,
+        )
 
-        # 应用反检测脚本
-        await self._apply_stealth()
+        # 获取浏览器实例
+        self._browser = self._context.browser
+
+        # 获取或创建页面
+        if self._context.pages:
+            # 使用自动创建的初始页面
+            self._page = self._context.pages[0]
+        else:
+            self._page = await self._context.new_page()
+
+        self._page.set_default_timeout(30000)
+
+        # 在页面上注入反检测脚本（使用 page.add_init_script 确保对当前页面生效）
+        await self._apply_stealth_to_page(self._page)
 
         logger.info("Browser started successfully")
 
@@ -88,35 +101,129 @@ class PlaywrightManager:
         if not self._context:
             return
 
-        # 注入反检测脚本
+        # 使用更完善的反检测脚本
+        from .stealth import STEALTH_SCRIPT
+
+        # 添加基础反检测
+        await self._context.add_init_script(STEALTH_SCRIPT)
+
+        # 添加针对 BOSS直聘等网站的额外反检测
         await self._context.add_init_script("""
-            // 隐藏webdriver属性
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-
-            // 修改plugins
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
-            });
-
-            // 修改languages
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['zh-CN', 'zh', 'en']
-            });
-
-            // 隐藏自动化标志
-            window.chrome = {
-                runtime: {}
+            // 覆盖 window.close() - BOSS检测到自动化后会尝试关闭窗口
+            window.close = function() {
+                console.log('[STEALTH] window.close() blocked');
             };
 
-            // 覆盖permissions查询
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                    Promise.resolve({ state: Notification.permission }) :
-                    originalQuery(parameters)
-            );
+            // 拦截 window.open("", "_self").close() 模式
+            var origOpen = window.open;
+            window.open = function(url, name, features) {
+                if (name === '_self') return window;
+                return { close: function() { console.log('[STEALTH] pseudo.close'); }, closed: false };
+            };
+
+            // 关键修复: BOSS直聘的前端会调用 history.back() 来阻止自动化访问
+            // 在 Playwright 中，新标签页的 history 回退会到 about:blank（白屏）
+            // 解决方案: 在 init_script 中立即覆盖 history 导航方法（不延迟）
+            // init_script 在页面任何 JS 执行前运行，所以可以确保拦截生效
+            (function() {
+                var originalBack = history.back.bind(history);
+                var originalForward = history.forward.bind(history);
+                var originalGo = history.go.bind(history);
+
+                Object.defineProperty(history, 'back', {
+                    value: function() {
+                        console.log('[STEALTH] history.back() called - replaced with noop');
+                    },
+                    configurable: true,
+                    writable: true
+                });
+
+                Object.defineProperty(history, 'forward', {
+                    value: function() {
+                        console.log('[STEALTH] history.forward() called - replaced with noop');
+                    },
+                    configurable: true,
+                    writable: true
+                });
+
+                Object.defineProperty(history, 'go', {
+                    value: function(delta) {
+                        console.log('[STEALTH] history.go(' + delta + ') called - ignored if negative');
+                        if (delta < 0) return;
+                        return originalGo(delta);
+                    },
+                    configurable: true,
+                    writable: true
+                });
+
+                console.log('[STEALTH] History interception activated at page init');
+            })();
+
+            console.log('[Stealth] Anti-detection scripts loaded');
+        """)
+
+    async def _apply_stealth_to_page(self, page: Page) -> None:
+        """对单个页面应用反检测脚本（用于持久化上下文的初始页面）"""
+        # 使用 page.add_init_script 确保脚本在当前页面执行
+        # 这些脚本会在页面刷新后重新执行
+
+        # 基础反检测
+        from .stealth import STEALTH_SCRIPT
+        await page.add_init_script(STEALTH_SCRIPT)
+
+        # BOSS 直聘专用反检测 - 立即执行拦截，不延迟
+        await page.add_init_script("""
+            // 覆盖 window.close() - BOSS检测到自动化后会尝试关闭窗口
+            window.close = function() {
+                console.log('[STEALTH] window.close() blocked');
+            };
+
+            // 拦截 window.open("", "_self").close() 模式
+            var origOpen = window.open;
+            window.open = function(url, name, features) {
+                if (name === '_self') return window;
+                return { close: function() { console.log('[STEALTH] pseudo.close'); }, closed: false };
+            };
+
+            // 关键修复: BOSS直聘的前端会调用 history.back() 来阻止自动化访问
+            // 在 Playwright 中，新标签页的 history 回退会到 about:blank（白屏）
+            // 解决方案: 在 init_script 中立即覆盖 history 导航方法（不延迟）
+            // init_script 在页面任何 JS 执行前运行，所以可以确保拦截生效
+            (function() {
+                var originalBack = history.back.bind(history);
+                var originalForward = history.forward.bind(history);
+                var originalGo = history.go.bind(history);
+
+                Object.defineProperty(history, 'back', {
+                    value: function() {
+                        console.log('[STEALTH] history.back() called - replaced with noop');
+                    },
+                    configurable: true,
+                    writable: true
+                });
+
+                Object.defineProperty(history, 'forward', {
+                    value: function() {
+                        console.log('[STEALTH] history.forward() called - replaced with noop');
+                    },
+                    configurable: true,
+                    writable: true
+                });
+
+                Object.defineProperty(history, 'go', {
+                    value: function(delta) {
+                        console.log('[STEALTH] history.go(' + delta + ') called - ignored if negative');
+                        if (delta < 0) return;
+                        return originalGo(delta);
+                    },
+                    configurable: true,
+                    writable: true
+                });
+
+                console.log('[STEALTH] History interception activated at page init');
+            })();
+
+            console.log('[Stealth] Anti-detection scripts loaded');
         """)
 
     async def new_page(self) -> Page:
@@ -124,10 +231,16 @@ class PlaywrightManager:
         if not self._context:
             await self.start()
 
+        # 调试：检查是否有现有页面
+        if self._page and not self._page.is_closed():
+            logger.warning(f"Creating new page while existing page is still open: {self._page.url}")
+
         self._page = await self._context.new_page()
 
         # 设置默认超时
         self._page.set_default_timeout(30000)
+
+        logger.info(f"Created new page, URL: {self._page.url}")
 
         return self._page
 
@@ -179,15 +292,29 @@ def get_browser_manager() -> PlaywrightManager:
     global _browser_manager
     if _browser_manager is None:
         settings = get_settings()
+        # 使用绝对路径存储浏览器用户数据
+        user_data_dir = str(Path.cwd() / "browser_data")
         # 始终使用有界面模式，避免被反爬检测
-        # 如果需要后台运行，可以设置为 settings.debug
         _browser_manager = PlaywrightManager(
             headless=False,  # 有界面模式，更不容易被检测
+            user_data_dir=user_data_dir,
         )
     return _browser_manager
 
 
+async def close_and_reset_browser_manager():
+    """关闭并重置浏览器管理器（用于登录时重新应用反检测脚本）"""
+    global _browser_manager
+    if _browser_manager is not None:
+        try:
+            await _browser_manager.close()
+            logger.info("Browser closed for reset")
+        except Exception as e:
+            logger.warning(f"Error closing browser: {e}")
+    _browser_manager = None
+
+
 def reset_browser_manager():
-    """重置浏览器管理器（用于测试或浏览器被关闭后重启）"""
+    """重置浏览器管理器（仅重置变量，不关闭浏览器）"""
     global _browser_manager
     _browser_manager = None

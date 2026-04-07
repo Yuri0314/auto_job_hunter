@@ -88,42 +88,88 @@ class BossAdapter(BasePlatformAdapter):
     async def login(self, username: str, password: str) -> bool:
         """登录BOSS直聘
 
-        用户手动在浏览器中输入手机号+验证码登录
+        使用持久化浏览器用户数据目录，复用之前的登录状态。
+        如果用户已登录，会自动恢复会话；如果未登录，用户手动完成登录后
+        系统会自动保存 Cookie。
+
+        流程：
+        1. 系统启动浏览器（复用用户数据目录中的会话），使用初始页面
+        2. 如果已有有效会话，直接跳转到首页
+        3. 如果需要登录，用户手动输入手机号+验证码
+        4. 系统检测登录成功后自动保存 Cookie
         """
         try:
-            # 清除旧的 Cookie 文件，确保干净的登录环境
-            self.cookie_manager.delete_cookies("boss")
-            logger.info("Cleared old cookies for fresh login")
-
-            # 关闭旧页面
-            if self._page and not self._page.is_closed():
-                await self._page.close()
-                self._page = None
-
-            # 启动浏览器
+            # 启动浏览器（会自动恢复用户数据目录中的会话）
+            # 关键：使用 start() 创建的初始页面，而不是 new_page() 创建的空白页
+            # 初始页面已经有 stealth 脚本注入，且 history 栈不为空
+            logger.info("Starting browser with persistent user data...")
             await self.browser_manager.start()
-            self._page = await self.browser_manager.new_page()
             context = self.browser_manager._context
 
-            # 直接跳转到登录页
+            # 复用初始页面，不创建新页面
+            # 初始页面是 launch_persistent_context 自动创建的，已经有 stealth 脚本
+            self._page = self.browser_manager._page
+
+            if not self._page or self._page.is_closed():
+                logger.error("Failed to get initial page from browser manager")
+                return False
+
+            # 尝试导航到登录页
             logger.info(f"Navigating to login page: {self.LOGIN_URL}")
-            await self._page.goto(self.LOGIN_URL)
+            try:
+                response = await self._page.goto(self.LOGIN_URL, timeout=30000)
+                logger.info(f"Navigation complete, status: {response.status if response else 'unknown'}")
+            except Exception as e:
+                logger.warning(f"Navigation error: {e}")
+
             await asyncio.sleep(2)
 
-            logger.info("请在打开的浏览器中输入手机号+验证码完成登录")
+            # 检查当前 URL
+            current_url = self._page.url
+            logger.info(f"Current URL after navigation: {current_url}")
+
+            if "blank" in current_url:
+                logger.warning("Page is on about:blank, please navigate manually")
+
+            logger.info("=" * 50)
+            logger.info("请在打开的浏览器窗口中完成登录：")
+            logger.info("  1. 如果页面是白屏，请按 F5 刷新或手动输入网址")
+            logger.info("  2. 输入手机号获取验证码")
+            logger.info("  3. 完成登录后系统会自动保存 Cookie")
+            logger.info("=" * 50)
 
             # 等待用户手动登录（最多等待5分钟）
             for i in range(150):  # 5分钟 = 150 * 2秒
                 await asyncio.sleep(2)
-                # 检查当前页面是否有登录后的头像
-                avatar = await self._page.query_selector(self.LOGIN_INDICATOR)
-                if avatar:
-                    self._logged_in = True
-                    # 保存Cookie
-                    if context:
-                        await self.cookie_manager.save_cookies(context, "boss")
-                    logger.info("Login successful, cookies saved")
-                    return True
+
+                try:
+                    current_url = self._page.url
+
+                    # 尝试检测登录成功的标志
+                    avatar = await self._page.query_selector(self.LOGIN_INDICATOR)
+
+                    if avatar:
+                        self._logged_in = True
+                        if context:
+                            await self.cookie_manager.save_cookies(context, "boss")
+                        logger.info("Login successful, cookies saved")
+                        return True
+
+                    # 如果页面在首页而不是登录页，可能已登录
+                    if "zhipin.com/web/geek" in current_url or ("zhipin.com" in current_url and "user" not in current_url):
+                        avatar = await self._page.query_selector(self.LOGIN_INDICATOR)
+                        if avatar:
+                            self._logged_in = True
+                            if context:
+                                await self.cookie_manager.save_cookies(context, "boss")
+                            logger.info("Login successful (detected via URL change), cookies saved")
+                            return True
+
+                except Exception as check_error:
+                    # 页面可能正在导航，忽略错误
+                    if "Execution context was destroyed" not in str(check_error):
+                        logger.debug(f"Check error: {check_error}")
+
                 # 每30秒提示一下
                 if i > 0 and i % 15 == 0:
                     logger.info(f"等待登录中... ({i * 2}秒)")

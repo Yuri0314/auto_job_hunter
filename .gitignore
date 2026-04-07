@@ -89,5 +89,13 @@ test_result.json
 .playwright-mcp/
 .superpowers/
 
+# Browser data (persistent Chrome profile)
+browser_data/
+browser_data_*/
+
+# Debug/test scripts in tests/ directory
+tests/debug_*.py
+tests/manual_login.py
+
 # Superpowers temporary plans (keep specs)
 docs/superpowers/plans/

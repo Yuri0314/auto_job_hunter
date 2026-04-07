@@ -7,9 +7,7 @@ Auto Job Hunter - 自动求职投递系统
 
 import asyncio
 import argparse
-import subprocess
 import sys
-import time
 import webbrowser
 import os
 from loguru import logger
@@ -71,38 +69,23 @@ async def run_daemon(interval: int = 60, use_ai: bool = False):
     await orchestrator.start_scheduled(interval_minutes=interval)
 
 
-async def run_web(host: str = "0.0.0.0", port: int = 8000, reload: bool = True):
-    """启动Web服务（FastAPI + NiceGUI）"""
+def run_server(port: int = 8000, reload: bool = False, no_browser: bool = False):
+    """启动服务
+
+    Args:
+        port: 服务端口
+        reload: 开发模式（热重载），注意：此模式下浏览器自动化功能不可用
+        no_browser: 不自动打开浏览器
+    """
+    import urllib.request
     import uvicorn
 
-    logger.info(f"Starting web server at {host}:{port}")
-    logger.info(f"NiceGUI UI: http://localhost:{port}/ui")
-
-    # Windows 兼容性：使用 WindowsSelectorEventLoopPolicy
-    if sys.platform == "win32":
+    # reload 模式需要切换到 SelectorEventLoopPolicy（Windows限制）
+    # 但这会导致 Playwright 无法创建子进程，浏览器自动化功能不可用
+    if reload and sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    # 添加frontend_nicegui到reload监控目录
-    reload_dirs = ["backend", "frontend_nicegui"] if reload else None
-
-    uvicorn.run(
-        "backend.main:app",
-        host=host,
-        port=port,
-        reload=reload,
-        reload_dirs=reload_dirs,
-    )
-
-
-def run_gui(port: int = 8000, no_browser: bool = False):
-    """一键启动GUI界面（FastAPI + NiceGUI 单服务）"""
-    import urllib.request
-
-    # Windows asyncio 兼容性
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        print("\n[开发模式] 热重载已启用，但浏览器自动化功能（登录、搜索、投递）不可用")
+        print("  如需使用浏览器功能，请不加 --reload 参数启动\n")
 
     print("=" * 50)
     print("Auto Job Hunter - 启动中...")
@@ -120,12 +103,14 @@ def run_gui(port: int = 8000, no_browser: bool = False):
     if check_port_in_use(port):
         print(f"\n[警告] 端口 {port} 已被占用，服务可能已在运行")
         print("  如需重启，请先关闭旧进程: taskkill /F /IM python.exe")
-        print("  或使用不同端口: python run.py gui --port 8080")
+        print("  或使用不同端口: python run.py --port 8080")
         print(f"\n请在浏览器访问: http://localhost:{port}/ui/dashboard")
         return
 
     try:
         print(f"\n启动服务 (端口 {port})...")
+        if reload:
+            print("  模式: 开发模式 (热重载)")
 
         # 打开浏览器
         ui_url = f"http://localhost:{port}/ui/dashboard"
@@ -141,11 +126,13 @@ def run_gui(port: int = 8000, no_browser: bool = False):
         print("\n按 Ctrl+C 停止服务...")
 
         # 启动uvicorn服务
-        import uvicorn
+        reload_dirs = ["backend", "frontend_nicegui"] if reload else None
         uvicorn.run(
             "backend.main:app",
             host="127.0.0.1",
             port=port,
+            reload=reload,
+            reload_dirs=reload_dirs,
         )
 
     except KeyboardInterrupt:
@@ -159,10 +146,30 @@ def run_gui(port: int = 8000, no_browser: bool = False):
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
-        description="Auto Job Hunter - 自动求职投递系统"
+        description="Auto Job Hunter - 自动求职投递系统",
+        # 无子命令时显示帮助而不是报错
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="可用命令")
+    # 直接参数（默认启动服务）
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="服务端口 (默认: 8000)"
+    )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="开发模式（热重载），注意：此模式下浏览器自动化功能不可用"
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="不自动打开浏览器"
+    )
+
+    # 子命令
+    subparsers = parser.add_subparsers(dest="command", help="其他命令")
 
     # search 子命令
     search_parser = subparsers.add_parser("search", help="搜索职位")
@@ -207,36 +214,8 @@ def main():
         help="使用AI模式"
     )
 
-    # web 子命令
-    web_parser = subparsers.add_parser("web", help="启动Web服务")
-    web_parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="监听地址"
-    )
-    web_parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="端口"
-    )
-
     # init 子命令
     init_parser = subparsers.add_parser("init", help="初始化系统")
-
-    # gui 子命令
-    gui_parser = subparsers.add_parser("gui", help="一键启动GUI界面")
-    gui_parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="服务端口"
-    )
-    gui_parser.add_argument(
-        "--no-browser",
-        action="store_true",
-        help="不自动打开浏览器"
-    )
 
     args = parser.parse_args()
 
@@ -261,12 +240,6 @@ def main():
             use_ai=args.ai,
         ))
 
-    elif args.command == "web":
-        asyncio.run(run_web(
-            host=args.host,
-            port=args.port,
-        ))
-
     elif args.command == "init":
         print("初始化数据库...")
         init_db()
@@ -276,17 +249,16 @@ def main():
         print("  - LIEPIN_PHONE: 猎聘手机号")
         print("  - MAIMAI_PHONE: 脉脉手机号")
         print("  - OPENAI_API_KEY: OpenAI API密钥(可选)")
-        print("\n启动Web服务: python -m backend.cli web")
-        print("启动GUI界面: python -m backend.cli gui")
-
-    elif args.command == "gui":
-        run_gui(
-            port=args.port,
-            no_browser=args.no_browser,
-        )
+        print("\n启动服务: python run.py")
+        print("开发模式: python run.py --reload")
 
     else:
-        parser.print_help()
+        # 默认启动服务
+        run_server(
+            port=args.port,
+            reload=args.reload,
+            no_browser=args.no_browser,
+        )
 
 
 if __name__ == "__main__":
