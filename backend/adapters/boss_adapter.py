@@ -164,32 +164,15 @@ class BossAdapter(BasePlatformAdapter):
         """搜索职位 - 使用API拦截获取数据
 
         BOSS的API返回已解码的薪资数据，无需处理动态字体。
+        即使未登录，API也能返回数据。
         """
         try:
             page_obj = await self._get_page()
-
-            # 缓存API响应数据
-            self._api_data = {}
-
-            async def capture_api_response(response: Response):
-                """捕获joblist API响应"""
-                url = response.url
-                if self.JOBLIST_API in url:
-                    try:
-                        body = await response.body()
-                        data = json.loads(body.decode('utf-8'))
-                        self._api_data['joblist'] = data
-                        logger.info(f"Captured joblist API: {len(body)} bytes")
-                    except Exception as e:
-                        logger.warning(f"Failed to capture joblist API: {e}")
-
-            page_obj.on("response", capture_api_response)
 
             # 构建搜索URL
             url = f"{self.SEARCH_URL}?query={keywords}"
 
             if city:
-                # 城市代码映射
                 city_codes = {
                     "北京": "101010100",
                     "上海": "101020100",
@@ -214,43 +197,57 @@ class BossAdapter(BasePlatformAdapter):
 
             url += f"&page={page}"
 
-            # 访问搜索页
             logger.info(f"Navigating to: {url}")
 
-            # 使用load事件等待页面加载
-            await page_obj.goto(url, wait_until="load", timeout=30000)
+            # 使用 expect_response 捕获 API 响应
+            api_data = {}
 
-            # 等待API响应 - 5秒应该足够
-            await asyncio.sleep(5)
+            async with page_obj.expect_response(
+                lambda r: self.JOBLIST_API in r.url,
+                timeout=15000
+            ) as response_info:
+                await page_obj.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-            # 检查是否被重定向到登录页面
-            current_url = page_obj.url
-            if "login" in current_url.lower() or "user" in current_url.lower():
-                logger.warning("Redirected to login page")
-                return SearchResult(error="需要先登录BOSS直聘，请在平台管理中完成登录")
+            # 获取响应 - response_info.value 是协程
+            try:
+                response = await response_info.value
+                data = await response.json()
+                api_data['joblist'] = data
+                logger.info("Captured joblist API via expect_response")
+            except Exception as e:
+                logger.warning(f"Failed to get joblist response: {e}")
 
-            # 优先使用API数据
-            if 'joblist' in self._api_data:
-                jobs = self._parse_joblist_api(self._api_data['joblist'])
+            # 检查 API 数据
+            if 'joblist' in api_data:
+                jobs = self._parse_joblist_api(api_data['joblist'])
                 logger.info(f"Parsed {len(jobs)} jobs from API")
-            else:
-                # 备用：从DOM解析
-                logger.warning("API data not captured, falling back to DOM parsing")
-                jobs = await self._parse_job_list(page_obj)
-                logger.info(f"Parsed {len(jobs)} jobs from DOM")
 
-            # 检查是否有更多
-            has_more = False
-            if 'joblist' in self._api_data:
-                zpData = self._api_data['joblist'].get('zpData', {})
+                zpData = api_data['joblist'].get('zpData', {})
                 has_more = zpData.get('hasMore', False)
+
+                return SearchResult(
+                    jobs=jobs,
+                    total_count=len(jobs),
+                    page=page,
+                    page_size=page_size,
+                    has_more=has_more,
+                )
+
+            # API 捕获失败，尝试 DOM 解析
+            logger.warning("API data not captured, falling back to DOM parsing")
+
+            # 等待页面加载
+            await asyncio.sleep(3)
+
+            jobs = await self._parse_job_list(page_obj)
+            logger.info(f"Parsed {len(jobs)} jobs from DOM")
 
             return SearchResult(
                 jobs=jobs,
                 total_count=len(jobs),
                 page=page,
                 page_size=page_size,
-                has_more=has_more,
+                has_more=False,
             )
 
         except Exception as e:
