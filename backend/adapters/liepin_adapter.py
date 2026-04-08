@@ -3,6 +3,7 @@
 import asyncio
 import re
 from typing import List, Optional
+from datetime import datetime
 from loguru import logger
 from playwright.async_api import Page
 
@@ -483,8 +484,49 @@ class LiepinAdapter(BasePlatformAdapter):
 
     async def get_job_detail(self, job_id: str) -> Optional[JobInfo]:
         """获取职位详情"""
-        # TODO: 实现
-        return None
+        try:
+            page = await self._get_page()
+            url = f"{self.BASE_URL}/job/{job_id}.shtml"
+
+            await page.goto(url)
+            await asyncio.sleep(2)
+
+            # 提取职位标题
+            title_el = await page.query_selector(".job-title")
+            title = await title_el.inner_text() if title_el else ""
+
+            # 提取薪资
+            salary_el = await page.query_selector(".salary")
+            salary_text = await salary_el.inner_text() if salary_el else ""
+            salary_min, salary_max = self._parse_salary(salary_text)
+
+            # 提取公司名称
+            company_el = await page.query_selector(".company-name")
+            company = await company_el.inner_text() if company_el else ""
+
+            # 提取城市
+            location_el = await page.query_selector(".location")
+            city = await location_el.inner_text() if location_el else ""
+
+            # 提取职位描述
+            desc_el = await page.query_selector(".job-description")
+            description = await desc_el.inner_text() if desc_el else ""
+
+            return JobInfo(
+                id=job_id,
+                title=title.strip(),
+                company=company.strip(),
+                salary=salary_text.strip(),
+                salary_min=salary_min,
+                salary_max=salary_max,
+                city=city.strip(),
+                description=description.strip(),
+                platform="liepin",
+            )
+
+        except Exception as e:
+            logger.error(f"Get job detail failed: {e}")
+            return None
 
     async def apply_job(
         self,
@@ -533,8 +575,98 @@ class LiepinAdapter(BasePlatformAdapter):
         limit: int = 50,
     ) -> List[Message]:
         """获取HR消息"""
-        # TODO: 实现
-        return []
+        try:
+            page = await self._get_page()
+
+            # 访问消息页面
+            await page.goto(f"{self.BASE_URL}/message/")
+            await asyncio.sleep(2)
+
+            messages = []
+
+            # 解析消息列表
+            chat_items = await page.query_selector_all(".message-item")
+            for item in chat_items[:limit]:
+                try:
+                    msg = await self._parse_message_item(item)
+                    if msg:
+                        if not unread_only or not msg.is_read:
+                            messages.append(msg)
+                except Exception as e:
+                    logger.debug(f"Parse message item error: {e}")
+                    continue
+
+            return messages
+
+        except Exception as e:
+            logger.error(f"Get messages failed: {e}")
+            return []
+
+    async def _parse_message_item(self, item) -> Optional[Message]:
+        """解析单个消息项"""
+        try:
+            # 获取会话ID
+            chat_id = await item.get_attribute("data-id") or ""
+
+            # HR姓名
+            name_el = await item.query_selector(".sender-name")
+            hr_name = await name_el.inner_text() if name_el else "HR"
+
+            # 公司名称
+            company_el = await item.query_selector(".company-name")
+            company = await company_el.inner_text() if company_el else ""
+
+            # 消息内容
+            msg_el = await item.query_selector(".message-content")
+            content = await msg_el.inner_text() if msg_el else ""
+
+            # 时间
+            time_el = await item.query_selector(".message-time")
+            time_text = await time_el.inner_text() if time_el else ""
+            timestamp = self._parse_message_time(time_text)
+
+            # 未读标记
+            unread_el = await item.query_selector(".unread-mark")
+            is_read = unread_el is None
+
+            return Message(
+                id=chat_id,
+                hr_name=hr_name.strip(),
+                company=company.strip(),
+                content=content.strip(),
+                timestamp=timestamp,
+                is_read=is_read,
+                platform="liepin",
+            )
+
+        except Exception as e:
+            logger.debug(f"Parse message item error: {e}")
+            return None
+
+    def _parse_message_time(self, time_text: str) -> datetime:
+        """解析消息时间"""
+        now = datetime.now()
+        if not time_text:
+            return now
+
+        time_text = time_text.strip()
+
+        if ":" in time_text and len(time_text) <= 5:
+            try:
+                hour, minute = time_text.split(":")
+                return now.replace(hour=int(hour), minute=int(minute), second=0)
+            except ValueError:
+                pass
+
+        if "昨天" in time_text:
+            try:
+                time_part = time_text.replace("昨天", "").strip()
+                hour, minute = time_part.split(":")
+                return now.replace(day=now.day - 1, hour=int(hour), minute=int(minute), second=0)
+            except ValueError:
+                return now.replace(day=now.day - 1)
+
+        return now
 
     async def reply_message(
         self,
@@ -542,8 +674,52 @@ class LiepinAdapter(BasePlatformAdapter):
         content: str,
     ) -> bool:
         """回复消息"""
-        # TODO: 实现
-        return False
+        try:
+            page = await self._get_page()
+
+            # 访问消息页面
+            await page.goto(f"{self.BASE_URL}/message/")
+            await asyncio.sleep(2)
+
+            # 查找对应会话
+            chat_item = await page.query_selector(f'.message-item[data-id="{message_id}"]')
+            if not chat_item:
+                logger.warning(f"Chat item not found: {message_id}")
+                return False
+
+            # 点击进入会话
+            await chat_item.click()
+            await asyncio.sleep(1)
+
+            # 查找输入框
+            input_el = await page.query_selector(".message-input")
+            if not input_el:
+                input_el = await page.query_selector("textarea[placeholder]")
+
+            if not input_el:
+                logger.error("Message input not found")
+                return False
+
+            # 输入消息
+            await self.human_sim.human_type(page, ".message-input", content)
+            await asyncio.sleep(1)
+
+            # 发送
+            send_btn = await page.query_selector(".send-btn")
+            if send_btn:
+                await send_btn.click()
+                await asyncio.sleep(1)
+                logger.info(f"Message sent to {message_id}")
+                return True
+            else:
+                await input_el.press("Enter")
+                await asyncio.sleep(1)
+                logger.info(f"Message sent to {message_id} (via Enter)")
+                return True
+
+        except Exception as e:
+            logger.error(f"Reply message failed: {e}")
+            return False
 
     def _parse_salary(self, salary_text: str) -> tuple:
         """解析薪资"""

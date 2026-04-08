@@ -380,17 +380,72 @@ class Orchestrator:
         return all_messages
 
     async def auto_reply(self, messages: List[Message]) -> None:
-        """自动回复消息"""
+        """自动回复消息
+
+        使用AI生成个性化回复并发送
+        """
         if not self.use_ai:
             logger.info("Auto reply requires AI mode")
             return
 
         for message in messages:
             try:
-                # TODO: AI生成回复
-                pass
+                # 获取平台适配器
+                try:
+                    platform = Platform(message.platform)
+                except ValueError:
+                    logger.warning(f"Unknown platform: {message.platform}")
+                    continue
+
+                adapter = self.get_adapter(platform)
+
+                # 使用AI生成回复
+                if self._ai_service:
+                    reply_content = await self._ai_service.generate_reply(
+                        hr_name=message.sender_name,
+                        company=message.company,
+                        job_title=message.job_title,
+                        message_content=message.content,
+                    )
+                else:
+                    # 简单模式下使用预设回复模板
+                    reply_content = self._generate_simple_reply(
+                        hr_name=message.sender_name,
+                        company=message.company,
+                        job_title=message.job_title,
+                    )
+
+                # 发送回复
+                success = await adapter.reply_message(
+                    message_id=message.message_id,
+                    content=reply_content,
+                )
+
+                if success:
+                    logger.info(f"Auto reply sent to {message.sender_name} @ {message.company}")
+                else:
+                    logger.warning(f"Auto reply failed for {message.sender_name} @ {message.company}")
+
+                # 避免发送过快
+                await asyncio.sleep(2)
+
             except Exception as e:
                 logger.error(f"Auto reply error: {e}")
+
+    def _generate_simple_reply(
+        self,
+        hr_name: Optional[str],
+        company: Optional[str],
+        job_title: Optional[str],
+    ) -> str:
+        """生成简单回复模板"""
+        templates = [
+            f"您好！我对{job_title or '该职位'}很感兴趣，我的经验与岗位要求非常匹配，期待进一步沟通！",
+            f"您好，感谢关注！我对{company or '贵公司'}的{job_title or '职位'}很感兴趣，希望能有机会详聊。",
+            f"您好！我看到您发布的{job_title or '职位'}信息，觉得与我的职业规划很契合，期待与您进一步交流。",
+        ]
+        import random
+        return random.choice(templates)
 
     async def run_job_search_cycle(
         self,

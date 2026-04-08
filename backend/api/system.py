@@ -227,15 +227,93 @@ async def get_logs(
     level: str = None,
 ):
     """获取系统日志"""
-    # TODO: 实现日志查询
+    import os
+    import glob
+    from datetime import datetime
+
+    log_dir = "./logs"
+    log_files = sorted(glob.glob(os.path.join(log_dir, "*.log")), reverse=True)
+
+    logs = []
+    total = 0
+
+    for log_file in log_files:
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                total += len(lines)
+
+                for line in reversed(lines):
+                    if len(logs) >= limit:
+                        break
+
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # 按级别过滤
+                    if level:
+                        if level.upper() not in line.upper():
+                            continue
+
+                    # 解析日志行
+                    log_entry = {
+                        "raw": line,
+                        "source": os.path.basename(log_file),
+                    }
+
+                    # 尝试提取时间戳和级别
+                    if "|" in line:
+                        parts = line.split("|")
+                        if len(parts) >= 4:
+                            log_entry["timestamp"] = parts[0].strip()
+                            log_entry["level"] = parts[1].strip()
+                            log_entry["module"] = parts[2].strip()
+                            log_entry["message"] = "|".join(parts[3:]).strip()
+
+                    logs.append(log_entry)
+
+                if len(logs) >= limit:
+                    break
+
+        except Exception as e:
+            continue
+
     return {
-        "logs": [],
-        "total": 0,
+        "logs": list(reversed(logs)),
+        "total": total,
+        "limit": limit,
     }
 
 
 @router.post("/shutdown")
 async def shutdown_system():
     """关闭系统"""
-    # TODO: 实现优雅关闭
-    return {"message": "Shutdown initiated"}
+    import sys
+    from backend.automation.browser import get_browser_manager
+    from loguru import logger
+
+    try:
+        logger.info("正在关闭系统...")
+
+        # 关闭浏览器
+        try:
+            browser = get_browser_manager()
+            await browser.close()
+            logger.info("浏览器已关闭")
+        except Exception as e:
+            logger.warning(f"关闭浏览器时出错: {e}")
+
+        # 清理资源
+        from backend.services import _orchestrator
+        if _orchestrator:
+            _orchestrator.stop()
+            logger.info("协调器已停止")
+
+        logger.info("系统关闭完成")
+
+        # 退出应用
+        sys.exit(0)
+
+    except Exception as e:
+        return {"error": str(e)}

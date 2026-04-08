@@ -450,8 +450,51 @@ class BossAdapter(BasePlatformAdapter):
 
     async def _parse_job_detail(self, page: Page) -> Optional[JobInfo]:
         """解析职位详情页"""
-        # TODO: 实现详情页解析
-        return None
+        try:
+            # 等待页面加载
+            await asyncio.sleep(2)
+
+            # 提取职位标题
+            title_el = await page.query_selector("h1")
+            title = await title_el.inner_text() if title_el else ""
+
+            # 提取薪资
+            salary_el = await page.query_selector(".salary")
+            salary_text = await salary_el.inner_text() if salary_el else ""
+            salary_min, salary_max = self._parse_salary(salary_text)
+
+            # 提取公司名称
+            company_el = await page.query_selector(".company-name")
+            company = await company_el.inner_text() if company_el else ""
+
+            # 提取城市
+            area_el = await page.query_selector(".area")
+            city = await area_el.inner_text() if area_el else ""
+
+            # 提取经验要求
+            exp_el = await page.query_selector(".experience")
+            experience = await exp_el.inner_text() if exp_el else ""
+
+            # 提取职位描述
+            desc_el = await page.query_selector(".detail-content")
+            description = await desc_el.inner_text() if desc_el else ""
+
+            return JobInfo(
+                id="",
+                title=title.strip(),
+                company=company.strip(),
+                salary=salary_text.strip(),
+                salary_min=salary_min,
+                salary_max=salary_max,
+                city=city.strip().split("·")[0] if city else "",
+                description=description.strip(),
+                experience_required=experience.strip(),
+                platform="boss",
+            )
+
+        except Exception as e:
+            logger.error(f"Parse job detail error: {e}")
+            return None
 
     async def apply_job(
         self,

@@ -177,12 +177,50 @@ async def retry_application(
     if application.status != ApplicationStatus.FAILED:
         raise HTTPException(status_code=400, detail="Only failed applications can be retried")
 
-    # TODO: 实际重试逻辑
-    application.status = ApplicationStatus.RETRY
-    application.retry_count += 1
-    db.commit()
+    # 检查重试次数限制
+    if application.retry_count >= 3:
+        raise HTTPException(status_code=400, detail="Max retry count reached")
 
-    return {"message": "Retry initiated", "application_id": application_id}
+    try:
+        # 获取平台适配器并重试投递
+        from backend.adapters import get_adapter, Platform
+
+        try:
+            platform = Platform(application.platform)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform: {application.platform}")
+
+        adapter = get_adapter(platform)
+
+        # 重新投递
+        result = await adapter.apply_job(
+            job_id=application.job_id,
+            greeting=application.greeting,
+        )
+
+        if result.success:
+            application.status = ApplicationStatus.SUCCESS
+            application.error_message = None
+            application.retry_count += 1
+            db.commit()
+
+            logger.info(f"重试投递成功: {application.job_id}")
+            return {"message": "Retry successful", "application_id": application_id, "success": True}
+        else:
+            application.retry_count += 1
+            application.error_message = result.error
+            db.commit()
+
+            logger.warning(f"重试投递失败: {application.job_id} - {result.error}")
+            return {"message": f"Retry failed: {result.error}", "application_id": application_id, "success": False}
+
+    except Exception as e:
+        logger.error(f"重试投递异常: {application.job_id} - {e}")
+        application.error_message = str(e)
+        application.retry_count += 1
+        db.commit()
+
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/statistics")

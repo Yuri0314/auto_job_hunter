@@ -1,11 +1,14 @@
 """消息相关API"""
 
+import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
+from loguru import logger
 
 from backend.core.database import Message, get_db
+from backend.adapters import get_adapter, Platform
 
 
 router = APIRouter()
@@ -111,12 +114,34 @@ async def reply_message(
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # TODO: 实际发送回复
-    message.is_replied = True
-    message.reply_content = request.content
-    db.commit()
+    try:
+        # 获取平台适配器并发送回复
+        try:
+            platform = Platform(message.platform)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform: {message.platform}")
 
-    return {"message": "Reply sent"}
+        adapter = get_adapter(platform)
+
+        # 使用会话ID（message_id 存储的是平台会话ID）
+        success = await adapter.reply_message(
+            message_id=message.message_id,
+            content=request.content,
+        )
+
+        if success:
+            message.is_replied = True
+            message.reply_content = request.content
+            db.commit()
+            logger.info(f"回复消息成功: {message.sender_name} @ {message.company}")
+            return {"message": "Reply sent", "success": True}
+        else:
+            logger.warning(f"回复消息失败: {message.sender_name} @ {message.company}")
+            return {"message": "Reply failed", "success": False}
+
+    except Exception as e:
+        logger.error(f"回复消息异常: {message.sender_name} - {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{message_id}/auto-reply")
@@ -132,12 +157,33 @@ async def auto_reply(
     if not message.suggested_reply:
         raise HTTPException(status_code=400, detail="No suggested reply available")
 
-    # TODO: 实际发送回复
-    message.is_replied = True
-    message.reply_content = message.suggested_reply
-    db.commit()
+    try:
+        # 获取平台适配器并发送回复
+        try:
+            platform = Platform(message.platform)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform: {message.platform}")
 
-    return {"message": "Auto reply sent", "content": message.suggested_reply}
+        adapter = get_adapter(platform)
+
+        success = await adapter.reply_message(
+            message_id=message.message_id,
+            content=message.suggested_reply,
+        )
+
+        if success:
+            message.is_replied = True
+            message.reply_content = message.suggested_reply
+            db.commit()
+            logger.info(f"AI自动回复成功: {message.sender_name} @ {message.company}")
+            return {"message": "Auto reply sent", "content": message.suggested_reply, "success": True}
+        else:
+            logger.warning(f"AI自动回复失败: {message.sender_name} @ {message.company}")
+            return {"message": "Auto reply failed", "success": False}
+
+    except Exception as e:
+        logger.error(f"AI自动回复异常: {message.sender_name} - {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/check-new")

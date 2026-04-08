@@ -1,15 +1,20 @@
 """职位相关API"""
 
+import asyncio
 from typing import List, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
+from loguru import logger
 
 from backend.core.database import (
     Job,
     JobStatus,
+    Application,
     get_db,
 )
+from backend.adapters import get_adapter, Platform
 
 
 router = APIRouter()
@@ -132,8 +137,46 @@ async def apply_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # TODO: 实际投递逻辑
-    return {"message": "Application submitted", "job_id": job_id}
+    try:
+        # 获取平台适配器
+        try:
+            platform = Platform(job.platform)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unsupported platform: {job.platform}")
+
+        adapter = get_adapter(platform)
+
+        # 执行投递
+        result = await adapter.apply_job(
+            job_id=job.job_id,
+            greeting=greeting,
+        )
+
+        if result.success:
+            # 更新职位状态
+            job.status = JobStatus.APPLIED
+            job.applied_at = datetime.now()
+            db.commit()
+
+            # 创建投递记录
+            application = Application(
+                job_id=job.job_id,
+                platform=job.platform,
+                status="success",
+                message=result.message,
+            )
+            db.add(application)
+            db.commit()
+
+            logger.info(f"手动投递成功: {job.title} @ {job.company}")
+            return {"message": "Application submitted", "job_id": job_id, "success": True}
+        else:
+            logger.warning(f"手动投递失败: {job.title} @ {job.company} - {result.error}")
+            return {"message": f"Application failed: {result.error}", "job_id": job_id, "success": False}
+
+    except Exception as e:
+        logger.error(f"手动投递异常: {job.title} - {e}")
+        return {"message": f"Application error: {str(e)}", "job_id": job_id, "success": False}
 
 
 @router.delete("/{job_id}")
