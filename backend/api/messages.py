@@ -123,9 +123,9 @@ async def reply_message(
 
         adapter = get_adapter(platform)
 
-        # 使用会话ID（message_id 存储的是平台会话ID）
+        # 使用会话ID（conversation_id 存储的是平台会话ID）
         success = await adapter.reply_message(
-            message_id=message.message_id,
+            message_id=message.conversation_id,
             content=request.content,
         )
 
@@ -167,7 +167,7 @@ async def auto_reply(
         adapter = get_adapter(platform)
 
         success = await adapter.reply_message(
-            message_id=message.message_id,
+            message_id=message.conversation_id,
             content=message.suggested_reply,
         )
 

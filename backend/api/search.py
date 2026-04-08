@@ -53,6 +53,14 @@ class SearchRequest(BaseModel):
 
 # ========== 策略管理 API ==========
 
+@router.get("/strategies")
+async def list_strategies():
+    """获取所有搜索策略"""
+    service = get_strategy_service()
+    strategies = service.get_all_strategies()
+    return {"items": strategies, "total": len(strategies)}
+
+
 @router.get("/strategies/{strategy_id}")
 async def get_strategy(strategy_id: int):
     """获取搜索策略"""

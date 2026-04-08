@@ -1,6 +1,7 @@
 """系统管理相关API"""
 
 import asyncio
+from typing import Optional
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -37,7 +38,7 @@ class LoginStatus(BaseModel):
     platform: str
     status: str  # "idle", "logging_in", "success", "failed"
     message: str
-    login_url: str = None
+    login_url: Optional[str] = None
 
 
 @router.get("/status", response_model=SystemStatus)

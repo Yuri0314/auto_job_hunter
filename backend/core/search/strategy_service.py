@@ -202,6 +202,17 @@ class StrategyService:
 
         return unique
 
+    def get_all_strategies(self) -> List[Dict[str, Any]]:
+        """获取所有搜索策略"""
+        db = SessionLocal()
+        try:
+            strategies = db.query(SearchStrategy).order_by(
+                SearchStrategy.priority.desc()
+            ).all()
+            return [self._to_dict(s) for s in strategies]
+        finally:
+            db.close()
+
     def _to_dict(self, strategy: SearchStrategy) -> Dict[str, Any]:
         """转换为字典"""
         return {

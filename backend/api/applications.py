@@ -244,7 +244,8 @@ async def get_statistics(
     ).count()
 
     # 按平台统计
-    platforms = db.query(Application.platform, db.func.count(Application.id)).filter(
+    from sqlalchemy import func
+    platforms = db.query(Application.platform, func.count(Application.id)).filter(
         Application.created_at >= start_date,
     ).group_by(Application.platform).all()
 
