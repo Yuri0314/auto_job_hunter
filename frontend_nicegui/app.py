@@ -1,11 +1,12 @@
 # frontend_nicegui/app.py
 """NiceGUI 应用入口"""
 
+import asyncio
 from nicegui import ui, app
 from fastapi import FastAPI
 
 from .styles import COLORS, GLOBAL_CSS
-from .layout import render_sidebar
+from .layout import render_sidebar, refresh_badges
 from .config import set_api_base
 
 
@@ -15,6 +16,10 @@ def setup_nicegui(fastapi_app: FastAPI, port: int = 8000):
     # 设置API地址
     set_api_base(port)
 
+    async def _refresh_badges_async():
+        """异步刷新角标"""
+        await refresh_badges()
+
     # 定义页面路由
     @ui.page('/')
     @ui.page('/dashboard')
@@ -22,6 +27,8 @@ def setup_nicegui(fastapi_app: FastAPI, port: int = 8000):
         render_sidebar()
         from .pages.dashboard import render_dashboard
         render_dashboard()
+        # 刷新角标
+        ui.timer(30.0, lambda: asyncio.create_task(_refresh_badges_async()), once=False)
 
     @ui.page('/resumes')
     def resumes_page():

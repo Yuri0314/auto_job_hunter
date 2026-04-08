@@ -159,6 +159,37 @@ class PlaywrightManager:
                 console.log('[STEALTH] History interception activated at page init');
             })();
 
+            // 阻止 location.reload() - BOSS 检测到自动化后会不断刷新页面
+            location.reload = function() {
+                console.log('[STEALTH] location.reload() blocked');
+                return;
+            };
+
+            // 隐藏 webdriver 特征
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => false,
+                configurable: true
+            });
+
+            // 伪造 Chrome 特征
+            window.chrome = window.chrome || {
+                app: { isInstalled: false },
+                csi: function() {},
+                loadTimes: function() {}
+            };
+
+            // 伪造 plugins
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+                configurable: true
+            });
+
+            // 伪造语言
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['zh-CN', 'zh', 'en'],
+                configurable: true
+            });
+
             console.log('[Stealth] Anti-detection scripts loaded');
         """)
 
@@ -222,6 +253,37 @@ class PlaywrightManager:
 
                 console.log('[STEALTH] History interception activated at page init');
             })();
+
+            // 阻止 location.reload() - BOSS 检测到自动化后会不断刷新页面
+            location.reload = function() {
+                console.log('[STEALTH] location.reload() blocked');
+                return;
+            };
+
+            // 隐藏 webdriver 特征
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => false,
+                configurable: true
+            });
+
+            // 伪造 Chrome 特征
+            window.chrome = window.chrome || {
+                app: { isInstalled: false },
+                csi: function() {},
+                loadTimes: function() {}
+            };
+
+            // 伪造 plugins
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+                configurable: true
+            });
+
+            // 伪造语言
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['zh-CN', 'zh', 'en'],
+                configurable: true
+            });
 
             console.log('[Stealth] Anti-detection scripts loaded');
         """)

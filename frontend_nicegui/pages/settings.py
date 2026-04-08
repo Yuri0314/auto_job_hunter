@@ -72,6 +72,9 @@ def _render_platform_login():
         except Exception as e:
             ui.notify(f"加载失败: {e}", type='negative')
 
+    # 登录状态轮询定时器
+    _login_check_timers: dict[str, ui.timer] = {}
+
     async def _do_login_wrapper(platform_id: str):
         """执行登录"""
         try:
@@ -84,7 +87,8 @@ def _render_platform_login():
                     ui.notify("浏览器已打开，请在窗口中完成登录", type='info', timeout=5000)
                     ui.notify("如果页面白屏，请按 F5 刷新后登录", type='warning', timeout=8000)
                     # 启动定时器检查登录状态
-                    ui.timer(5.0, lambda: _check_login_status(platform_id), once=False)
+                    timer = ui.timer(5.0, lambda: _check_login_status(platform_id), once=False)
+                    _login_check_timers[platform_id] = timer
                 elif status == "already_running":
                     ui.notify("登录任务已在进行中", type='info')
                 else:
@@ -103,13 +107,18 @@ def _render_platform_login():
                     if status == "success":
                         ui.notify(f"{platform_names.get(platform_id, platform_id)} 登录成功！", type='positive')
                         await load_status()
-                        return True  # 停止轮询
+                        _stop_login_check(platform_id)
                     elif status == "failed":
                         ui.notify(f"登录失败: {result.get('message', '')}", type='negative')
-                        return True  # 停止轮询
+                        _stop_login_check(platform_id)
         except Exception as e:
             pass  # 忽略检查错误
-        return False  # 继续轮询
+
+    def _stop_login_check(platform_id: str):
+        """停止登录状态轮询"""
+        if platform_id in _login_check_timers:
+            timer = _login_check_timers.pop(platform_id)
+            timer.stop()
 
     async def _do_logout_wrapper(platform_id: str):
         """执行退出"""

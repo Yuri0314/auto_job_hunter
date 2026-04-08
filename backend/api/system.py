@@ -140,17 +140,20 @@ async def _do_login(platform: str):
 
         # 调用适配器登录（用户在浏览器中手动输入手机号和验证码）
         success = await adapter.login("", "")
+        logger.info(f"Login adapter returned: success={success}")
 
         if success:
             _login_tasks[platform] = {
                 "status": "success",
                 "message": "登录成功！Cookie已保存",
             }
+            logger.info(f"Login task for {platform} completed: success")
         else:
             _login_tasks[platform] = {
                 "status": "failed",
                 "message": "登录失败或超时",
             }
+            logger.info(f"Login task for {platform} completed: failed")
 
     except Exception as e:
         logger.error(f"Login task error: {e}")
@@ -158,6 +161,11 @@ async def _do_login(platform: str):
             "status": "failed",
             "message": f"登录出错: {str(e)}",
         }
+    finally:
+        # 确保登录任务结束后清理状态，避免永久卡在 logging_in
+        if _login_tasks.get(platform, {}).get("status") == "logging_in":
+            logger.warning(f"Login task for {platform} was stuck in logging_in, cleaning up")
+            del _login_tasks[platform]
 
 
 @router.post("/login/{platform}")
@@ -184,11 +192,17 @@ async def login_platform(
 
     # 检查是否已有登录任务在运行
     task_info = _login_tasks.get(platform, {})
-    if task_info.get("status") == "logging_in":
+    current_status = task_info.get("status")
+
+    if current_status == "logging_in":
         return {
             "status": "already_running",
             "message": "登录任务正在进行中，请在浏览器中完成登录",
         }
+
+    # 如果之前登录失败，允许重试（清除旧状态）
+    if current_status == "failed":
+        del _login_tasks[platform]
 
     # 启动后台登录任务
     background_tasks.add_task(_do_login, platform)

@@ -99,6 +99,13 @@ def render_search_page():
                 'text-[#00d4ff] font-mono mb-4'
             )
 
+            if applied > 0:
+                with ui.row().classes('gap-2 mb-4'):
+                    ui.button("查看投递记录", icon="list_alt",
+                              on_click=lambda: ui.navigate.to('/applications')).classes('primary-btn')
+                    ui.button("查看消息", icon="mail",
+                              on_click=lambda: ui.navigate.to('/messages')).classes('action-btn')
+
             jobs = result.get("jobs", [])
             if not jobs:
                 ui.label("没有找到符合条件的职位").classes('text-[#9ca3af]')

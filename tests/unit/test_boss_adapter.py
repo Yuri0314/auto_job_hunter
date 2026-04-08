@@ -47,8 +47,8 @@ class TestParseMessageTime:
 
         adapter = BossAdapter.__new__(BossAdapter)
 
-        result = adapter._parse_message_time("03-15")
-        assert result.month == 3
+        result = adapter._parse_message_time("04-15")
+        assert result.month == 4
         assert result.day == 15
 
     def test_time_empty(self):
@@ -77,39 +77,34 @@ class TestParseChatItem:
     async def test_parse_chat_item_basic(self):
         """测试基本消息项解析"""
         from backend.adapters.boss_adapter import BossAdapter
+        from selenium.common.exceptions import NoSuchElementException
 
-        # 创建 mock 元素
-        mock_item = AsyncMock()
+        # 创建 mock 元素（模拟 Selenium WebElement）
+        mock_item = MagicMock()
 
-        # 模拟 get_attribute
-        mock_item.get_attribute = AsyncMock(side_effect=lambda x: {
+        # 模拟 get_attribute（同步）
+        mock_item.get_attribute = MagicMock(side_effect=lambda x: {
             "data-geek": "12345",
             "data-id": None,
         }.get(x))
 
-        # 模拟 query_selector
-        async def mock_query_selector(selector):
-            mock_el = AsyncMock()
-            mock_el.inner_text = AsyncMock(return_value={
-                ".name": "张HR",
-                ".company-text": "测试公司",
-                ".company-name": "测试公司",
-                ".msg-text": "您好，我们正在招聘",
-                ".msg": "您好，我们正在招聘",
-                ".time": "10:30",
-                ".job-name": "Python工程师",
-            }.get(selector, ""))
-            return mock_el
+        # 模拟 find_element（同步）
+        def mock_find_element(by, xpath):
+            mock_el = MagicMock()
+            text_map = {
+                ".//span[contains(@class, 'name')]": "张HR",
+                ".//span[contains(@class, 'company-text') or contains(@class, 'company-name')]": "测试公司",
+                ".//span[contains(@class, 'msg-text') or contains(@class, 'msg')]": "您好，我们正在招聘",
+                ".//span[contains(@class, 'time')]": "10:30",
+                ".//span[contains(@class, 'job-name')]": "Python工程师",
+            }
+            if xpath in text_map:
+                mock_el.text = text_map[xpath]
+                return mock_el
+            # 未读标记不存在，抛出异常
+            raise NoSuchElementException("Not found")
 
-        mock_item.query_selector = mock_query_selector
-
-        # 模拟未读检查
-        async def mock_query_selector_unread(selector):
-            if selector == ".unread":
-                return None  # 没有未读标记 = 已读
-            return await mock_query_selector(selector)
-
-        mock_item.query_selector = mock_query_selector_unread
+        mock_item.find_element = mock_find_element
 
         # 测试
         adapter = BossAdapter.__new__(BossAdapter)

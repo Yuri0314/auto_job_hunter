@@ -10,8 +10,8 @@ NAV_ITEMS = [
     {"id": "dashboard", "label": "仪表盘", "icon": "home"},
     {"id": "resumes", "label": "管理简历", "icon": "description"},
     {"id": "search", "label": "搜索职位", "icon": "search"},
-    {"id": "applications", "label": "投递记录", "icon": "send"},
-    {"id": "messages", "label": "消息中心", "icon": "message"},
+    {"id": "applications", "label": "投递记录", "icon": "send", "badge": None},
+    {"id": "messages", "label": "消息中心", "icon": "message", "badge": None},
     {"id": "settings", "label": "设置", "icon": "settings"},
 ]
 
@@ -37,6 +37,7 @@ def render_sidebar():
 
         # 导航菜单
         for item in NAV_ITEMS:
+            badge = item.get('badge')
             with ui.button(
                 item['label'],
                 icon=item['icon'],
@@ -46,7 +47,9 @@ def render_sidebar():
                 'bg-transparent hover:bg-[rgba(255,255,255,0.05)] '
                 'border-none shadow-none mb-1'
             ):
-                pass
+                if badge is not None and badge > 0:
+                    with ui.badge().classes('absolute top-0 right-0 bg-[#ef4444] text-white text-xs min-w-[1.25rem] h-5 flex items-center justify-center rounded-full').style('font-size: 0.65rem; padding: 0 0.3rem;'):
+                        ui.label(str(badge) if badge < 100 else '99+').classes('text-white text-xs')
 
         # 底部版本信息
         ui.space()
@@ -68,3 +71,31 @@ def render_page_header(title: str, subtitle: str = None):
             ui.label(subtitle).classes(
                 'text-[#71717a] text-sm mt-1'
             )
+
+
+async def refresh_badges():
+    """刷新侧边栏角标数据"""
+    import httpx
+    from .config import API_BASE
+
+    try:
+        async with httpx.AsyncClient(http2=False, trust_env=False) as client:
+            # 获取未读消息数
+            r = await client.get(f"{API_BASE}/messages", params={"page": 1, "page_size": 1}, timeout=10)
+            if r.is_success:
+                data = r.json()
+                unread = data.get("unread", 0)
+                for item in NAV_ITEMS:
+                    if item["id"] == "messages":
+                        item["badge"] = unread if unread > 0 else None
+
+            # 获取失败的投递数
+            r = await client.get(f"{API_BASE}/applications", params={"page": 1, "page_size": 100}, timeout=10)
+            if r.is_success:
+                data = r.json()
+                failed = sum(1 for item in data.get("items", []) if item.get("status") == "failed")
+                for nav_item in NAV_ITEMS:
+                    if nav_item["id"] == "applications":
+                        nav_item["badge"] = failed if failed > 0 else None
+    except Exception:
+        pass

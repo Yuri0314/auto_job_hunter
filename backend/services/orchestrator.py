@@ -190,6 +190,8 @@ class Orchestrator:
         """AI模式过滤"""
         passed_jobs = []
         min_score = 70  # 最低匹配分数
+        max_ai_calls = 10  # 限制 AI 调用次数，避免超时
+        ai_call_count = 0
 
         resume = self._user_profile.resume_text if self._user_profile else ""
 
@@ -201,11 +203,12 @@ class Orchestrator:
                     continue
 
                 # AI匹配分析
-                if resume:
+                if resume and ai_call_count < max_ai_calls:
                     match_result = await self._ai_service.analyze_job_match(
                         resume=resume,
                         job_description=f"{job.title}\n{job.description or ''}",
                     )
+                    ai_call_count += 1
 
                     if match_result.total_score >= min_score:
                         job.match_score = match_result.total_score
@@ -214,11 +217,17 @@ class Orchestrator:
                         # 保存到数据库
                         await self._save_job_with_match(job, match_result)
                 else:
+                    # AI 调用次数用完后，通过简单过滤的直接放行
                     passed_jobs.append(job)
 
             except Exception as e:
                 logger.error(f"AI filter error for job {job.id}: {e}")
+                # AI 出错时，如果已通过简单过滤，则放行
+                simple_passed, _ = self._simple_mode.filter_job(job) if self._simple_mode else (True, [])
+                if simple_passed and job not in passed_jobs:
+                    passed_jobs.append(job)
 
+        logger.info(f"AI filter: {len(passed_jobs)}/{len(jobs)} jobs passed (AI calls: {ai_call_count})")
         return passed_jobs
 
     async def _save_job_with_match(self, job: JobInfo, match_result: MatchResult) -> None:
@@ -460,31 +469,36 @@ class Orchestrator:
 
         logger.info(f"Starting job search cycle: keywords={keywords}, platforms={[p.value for p in platforms]}")
 
-        # 1. 搜索职位
-        jobs = await self.search_jobs(
-            platforms=platforms,
-            keywords=keywords,
-            city=city,
-        )
-        logger.info(f"Found {len(jobs)} jobs")
+        try:
+            # 1. 搜索职位
+            jobs = await self.search_jobs(
+                platforms=platforms,
+                keywords=keywords,
+                city=city,
+            )
+            logger.info(f"Found {len(jobs)} jobs")
 
-        # 2. 过滤职位
-        filtered_jobs = await self.filter_jobs(jobs)
-        logger.info(f"Filtered to {len(filtered_jobs)} jobs")
+            # 2. 过滤职位
+            filtered_jobs = await self.filter_jobs(jobs)
+            logger.info(f"Filtered to {len(filtered_jobs)} jobs")
 
-        # 3. 投递职位
-        results = []
-        if apply_filtered and filtered_jobs:
-            results = await self.apply_jobs(filtered_jobs[:10])  # 限制每次投递数量
-            success_count = sum(1 for r in results if r.success)
-            logger.info(f"Applied {success_count}/{len(results)} jobs successfully")
+            # 3. 投递职位
+            results = []
+            success_count = 0
+            if apply_filtered and filtered_jobs:
+                results = await self.apply_jobs(filtered_jobs[:10])  # 限制每次投递数量
+                success_count = sum(1 for r in results if r.success)
+                logger.info(f"Applied {success_count}/{len(results)} jobs successfully")
 
-        return {
-            "total_jobs": len(jobs),
-            "filtered_jobs": len(filtered_jobs),
-            "applied_jobs": len(results),
-            "success_count": sum(1 for r in results if r.success),
-        }
+            return {
+                "total_jobs": len(jobs),
+                "filtered_jobs": len(filtered_jobs),
+                "applied_jobs": len(results),
+                "success_count": success_count,
+            }
+        except Exception as e:
+            logger.error(f"Job search cycle failed: {e}", exc_info=True)
+            raise
 
     async def start_scheduled(self, interval_minutes: int = 60) -> None:
         """启动定时任务"""

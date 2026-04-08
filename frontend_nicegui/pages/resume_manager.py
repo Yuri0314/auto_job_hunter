@@ -19,6 +19,25 @@ async def fetch_resumes():
     return {"items": [], "total": 0}
 
 
+async def one_click_job_api(platforms, max_apply=20, use_ai=False, auto_apply=True):
+    """调用一键求职API"""
+    try:
+        async with httpx.AsyncClient(http2=False, trust_env=False) as client:
+            r = await client.post(
+                f"{API_BASE}/resume/one-click-job",
+                json={
+                    "platforms": platforms,
+                    "max_apply": max_apply,
+                    "use_ai_keywords": use_ai,
+                    "auto_apply": auto_apply,
+                },
+                timeout=300,  # 一键求职可能耗时较长
+            )
+            return r.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 async def delete_resume_api(resume_id: int):
     """删除简历"""
     try:
@@ -137,7 +156,9 @@ def _render_resume_card(resume: dict, on_refresh):
             # 左侧信息
             with ui.column().classes('flex-1'):
                 with ui.row().classes('items-center gap-2'):
-                    ui.label(resume.get("name", "未命名")).classes('text-white font-semibold text-lg')
+                    # 优先显示解析出的姓名，如果没有则显示简历名称
+                    display_name = (profile and profile.get("name")) or resume.get("name", "未命名")
+                    ui.label(display_name).classes('text-white font-semibold text-lg')
                     if is_primary:
                         ui.badge("主简历", color='positive').classes('text-xs')
 
@@ -154,6 +175,11 @@ def _render_resume_card(resume: dict, on_refresh):
 
             # 右侧操作
             with ui.row().classes('gap-2'):
+                # 开始求职 - 主按钮
+                async def start_job_search(r=resume, p=profile):
+                    await _show_job_search_dialog(r, p)
+                ui.button("🚀 开始求职", on_click=start_job_search).classes('primary-btn text-xs')
+
                 ui.button("查看", on_click=lambda: _show_detail(resume)).classes('action-btn text-xs')
 
                 if not is_primary:
@@ -200,6 +226,149 @@ def _show_detail(resume: dict):
     dialog.open()
 
 
+async def _show_job_search_dialog(resume: dict, profile: dict):
+    """显示求职偏好确认弹窗"""
+    # 从简历预填充偏好
+    default_positions = (profile.get("target_positions") or []) if profile else []
+    default_cities = (profile.get("preferred_cities") or []) if profile else []
+    default_keywords = ", ".join(default_positions[:3]) if default_positions else ""
+    default_cities_text = ", ".join(default_cities[:3]) if default_cities else ""
+
+    with ui.dialog() as dialog, ui.card().classes('w-[480px] p-6'):
+        ui.label("🚀 开始求职").classes('text-xl font-bold mb-2')
+        ui.label("基于您的简历信息，为您推荐和投递匹配职位").classes('text-[#9ca3af] text-sm mb-4')
+
+        # 目标职位
+        ui.label("目标职位").classes('text-white font-semibold text-sm mb-1')
+        keywords_input = ui.textarea(
+            value=default_keywords,
+            placeholder="如：Python开发工程师, 后端开发, 数据工程师",
+        ).classes('w-full').props('outlined dense rows=2')
+        ui.label("用逗号分隔多个职位关键词").classes('text-[#9ca3af] text-xs mb-3')
+
+        # 意向城市
+        ui.label("意向城市").classes('text-white font-semibold text-sm mb-1')
+        cities_input = ui.textarea(
+            value=default_cities_text,
+            placeholder="如：北京, 上海, 深圳, 杭州",
+        ).classes('w-full').props('outlined dense rows=2')
+        ui.label("用逗号分隔多个城市").classes('text-[#9ca3af] text-xs mb-3')
+
+        # 投递模式
+        ui.label("投递模式").classes('text-white font-semibold text-sm mb-2')
+        mode = ui.toggle({
+            'smart': '🤖 智能探索',
+            'manual': '🎯 手动筛选',
+        }, value='smart').classes('w-full')
+
+        with ui.row().classes('w-full items-center gap-3 mt-2'):
+            auto_apply_checkbox = ui.checkbox("自动投递匹配的职位", value=True)
+
+        with ui.row().classes('w-full items-center gap-3'):
+            max_apply_input = ui.number(label="每日最多投递", value=20, min=1, max=100)
+            platform_select = ui.select(
+                options={'boss': 'BOSS直聘', 'liepin': '猎聘'},
+                value='boss',
+                label='目标平台',
+            ).classes('flex-1')
+
+        # 状态消息区
+        status_label = ui.label().classes('text-sm')
+
+        # 按钮
+        with ui.row().classes('w-full justify-end gap-3 mt-4'):
+            ui.button("取消", on_click=dialog.close).classes('action-btn')
+
+            async def do_start():
+                keywords = [k.strip() for k in keywords_input.value.split(",") if k.strip()]
+                cities = [c.strip() for c in cities_input.value.split(",") if c.strip()]
+
+                if not keywords:
+                    ui.notify("请输入目标职位关键词", type='warning')
+                    return
+
+                # 关闭偏好弹窗
+                dialog.close()
+
+                # 显示进度弹窗
+                await _show_progress_dialog(keywords, cities, mode.value,
+                                            auto_apply_checkbox.value,
+                                            int(max_apply_input.value),
+                                            [platform_select.value])
+
+            ui.button("开始求职", on_click=do_start).classes('primary-btn')
+
+    dialog.open()
+
+
+async def _show_progress_dialog(keywords, cities, mode, auto_apply, max_apply, platforms):
+    """显示求职执行进度"""
+    with ui.dialog() as dialog, ui.card().classes('w-[480px] p-6'):
+        ui.label("🚀 求职进行中...").classes('text-xl font-bold mb-4')
+
+        # 进度条
+        progress = ui.linear_progress(value=0, show_value=True).classes('w-full')
+
+        # 日志区
+        log_container = ui.column().classes('w-full mt-4 max-h-[300px] overflow-y-auto')
+
+        def add_log(msg):
+            with log_container:
+                ui.label(f"• {msg}").classes('text-[#9ca3af] text-sm')
+
+        add_log(f"开始执行，关键词: {', '.join(keywords)}")
+        add_log(f"目标城市: {', '.join(cities) if cities else '不限'}")
+        add_log(f"平台: {', '.join(platforms)}")
+        add_log("")
+
+        # 执行一键求职
+        try:
+            progress.set_value(10)
+            add_log("正在生成搜索关键词...")
+
+            result = await one_click_job_api(
+                platforms=platforms,
+                max_apply=max_apply,
+                use_ai=True,
+                auto_apply=auto_apply and mode == 'smart',
+            )
+
+            progress.set_value(90)
+
+            if result.get("success"):
+                add_log(f"✅ 完成！发现 {result.get('total_found', 0)} 个职位")
+                add_log(f"✅ 已投递 {result.get('total_applied', 0)} 个职位")
+                progress.set_value(100)
+
+                ui.notify(f"求职完成！已投递 {result.get('total_applied', 0)} 个职位",
+                          type='positive', timeout=5000)
+
+                with ui.row().classes('w-full justify-end mt-4'):
+                    ui.button("查看投递记录",
+                              on_click=lambda: (dialog.close(),
+                                                ui.navigate.to('/applications'))).classes('action-btn')
+                    ui.button("查看消息", icon="mail",
+                              on_click=lambda: (dialog.close(),
+                                                ui.navigate.to('/messages'))).classes('primary-btn')
+                    ui.button("关闭", on_click=dialog.close).classes('action-btn')
+            else:
+                add_log(f"❌ 执行失败: {result.get('error', '未知错误')}")
+                progress.set_value(100)
+
+                ui.notify(result.get("error", "执行失败"), type='negative')
+                with ui.row().classes('w-full justify-end mt-4'):
+                    ui.button("关闭", on_click=dialog.close).classes('primary-btn')
+
+        except Exception as e:
+            add_log(f"❌ 执行出错: {str(e)}")
+            progress.set_value(100)
+            ui.notify(f"执行出错: {str(e)}", type='negative')
+            with ui.row().classes('w-full justify-end mt-4'):
+                ui.button("关闭", on_click=dialog.close).classes('primary-btn')
+
+    dialog.open()
+
+
 def _render_upload_tab(tabs, refresh_list_fn):
     """渲染上传简历Tab"""
     ui.label("上传简历文件").classes('text-white font-semibold mb-2')
@@ -209,39 +378,44 @@ def _render_upload_tab(tabs, refresh_list_fn):
 
     async def handle_upload(e):
         """处理文件上传"""
-        file_content = e.content.read()
-        filename = e.name
+        try:
+            # NiceGUI 3.0+: e.file 是 FileUpload 对象，不是 Starlette UploadFile
+            # 使用 e.file.name 获取文件名，await e.file.read() 获取内容
+            file_content = await e.file.read()
+            filename = e.file.name
 
-        upload_result_container.clear()
-        with upload_result_container:
-            ui.spinner(size='lg')
-            ui.label("正在解析简历...").classes('text-[#9ca3af]')
+            upload_result_container.clear()
+            with upload_result_container:
+                ui.spinner(size='lg')
+                ui.label("正在解析简历...").classes('text-[#9ca3af]')
 
-        result = await upload_resume_api(file_content, filename)
+            result = await upload_resume_api(file_content, filename)
 
-        upload_result_container.clear()
-        with upload_result_container:
-            if result.get("success"):
-                ui.notify("简历上传成功！", type='positive')
-                extracted = result.get("extracted_data", {})
-                if extracted:
-                    with ui.card().classes('w-full p-4 mt-2'):
-                        ui.label("解析结果").classes('text-white font-semibold mb-2')
-                        with ui.grid(columns=2).classes('w-full gap-1'):
-                            if extracted.get("name"):
-                                ui.label("姓名:").classes('text-[#9ca3af]')
-                                ui.label(extracted.get("name")).classes('text-white')
-                            if extracted.get("phone"):
-                                ui.label("电话:").classes('text-[#9ca3af]')
-                                ui.label(extracted.get("phone")).classes('text-white')
-                            if extracted.get("email"):
-                                ui.label("邮箱:").classes('text-[#9ca3af]')
-                                ui.label(extracted.get("email")).classes('text-white')
-                if refresh_list_fn:
-                    await refresh_list_fn()
-                tabs.value = '简历列表'
-            else:
-                ui.notify(result.get("error", "上传失败"), type='negative')
+            upload_result_container.clear()
+            with upload_result_container:
+                if result.get("success"):
+                    ui.notify("简历上传成功！", type='positive', timeout=3000)
+                    extracted = result.get("extracted_data", {})
+                    if extracted:
+                        with ui.card().classes('w-full p-4 mt-2'):
+                            ui.label("解析结果").classes('text-white font-semibold mb-2')
+                            with ui.grid(columns=2).classes('w-full gap-1'):
+                                if extracted.get("name"):
+                                    ui.label("姓名:").classes('text-[#9ca3af]')
+                                    ui.label(extracted.get("name")).classes('text-white')
+                                if extracted.get("phone"):
+                                    ui.label("电话:").classes('text-[#9ca3af]')
+                                    ui.label(extracted.get("phone")).classes('text-white')
+                                if extracted.get("email"):
+                                    ui.label("邮箱:").classes('text-[#9ca3af]')
+                                    ui.label(extracted.get("email")).classes('text-white')
+                    if refresh_list_fn:
+                        await refresh_list_fn()
+                    tabs.value = '简历列表'
+                else:
+                    ui.notify(result.get("error", "上传失败"), type='negative')
+        except Exception as ex:
+            ui.notify(f"上传出错: {str(ex)}", type='negative')
 
     ui.upload(
         label="选择文件",
