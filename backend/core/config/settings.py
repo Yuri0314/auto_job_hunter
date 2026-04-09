@@ -331,11 +331,13 @@ class Settings(BaseSettings):
     def _get_field_info(self, field_name: str) -> Any:
         """获取字段信息（兼容 Pydantic v1 和 v2）"""
         # Pydantic v2 使用 model_fields
-        if hasattr(self, "model_fields"):
-            return self.model_fields.get(field_name)
+        model_fields = getattr(type(self), "model_fields", None)
+        if model_fields is not None:
+            return model_fields.get(field_name)
         # Pydantic v1 使用 __fields__
-        if hasattr(self, "__fields__"):
-            return self.__fields__.get(field_name)
+        fields = getattr(type(self), "__fields__", None)
+        if fields is not None:
+            return fields.get(field_name)
         return None
 
     def _get_field_annotation(self, field_info: Any) -> Any:
@@ -418,11 +420,13 @@ class Settings(BaseSettings):
     def _get_all_field_names(self) -> List[str]:
         """获取所有配置字段名（兼容 Pydantic v1 和 v2）"""
         # Pydantic v2 使用 model_fields
-        if hasattr(self, "model_fields"):
-            return list(self.model_fields.keys())
+        model_fields = getattr(type(self), "model_fields", None)
+        if model_fields is not None:
+            return list(model_fields.keys())
         # Pydantic v1 使用 __fields__
-        if hasattr(self, "__fields__"):
-            return list(self.__fields__.keys())
+        fields = getattr(type(self), "__fields__", None)
+        if fields is not None:
+            return list(fields.keys())
         # 从 CONFIG_METADATA 获取
         return list(CONFIG_METADATA.keys())
 

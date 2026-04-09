@@ -1,38 +1,48 @@
 """数据模型单元测试"""
 
-import pytest
-from datetime import datetime
 import uuid
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from backend.core.database import (
-    SessionLocal,
+    Application,
+    Base,
+    Job,
     Resume,
     ResumeProfile,
     SearchStrategy,
-    Job,
-    Application,
     UserProfile,
-    Base,
-    engine,
 )
 
 
-@pytest.fixture(scope="function")
-def db_session():
+# Legacy shared-database fixture removed.
+# _legacy_db_session_unused removed
+if False:
     """每个测试创建独立的数据库会话"""
-    Base.metadata.create_all(bind=engine)
-    session = SessionLocal()
-    yield session
-    # 清理测试数据
-    session.rollback()
-    session.query(Application).delete()
-    session.query(Job).delete()
-    session.query(SearchStrategy).delete()
-    session.query(ResumeProfile).delete()
-    session.query(Resume).delete()
-    session.query(UserProfile).filter(UserProfile.id >= 900).delete()  # 只删除测试用户
-    session.commit()
-    session.close()
+
+
+
+@pytest.fixture(scope="function")
+def db_session(tmp_path):
+    """为每个测试创建独立的 SQLite 数据库会话。"""
+    db_file = tmp_path / "test_models.db"
+    test_engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    session_factory = sessionmaker(bind=test_engine, expire_on_commit=False)
+
+    Base.metadata.create_all(bind=test_engine)
+    session = session_factory()
+
+    try:
+        yield session
+    finally:
+        session.close()
+        Base.metadata.drop_all(bind=test_engine)
+        test_engine.dispose()
 
 
 class TestResumeModel:

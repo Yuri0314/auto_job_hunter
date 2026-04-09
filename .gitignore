@@ -96,6 +96,10 @@ browser_data_*/
 # Debug/test scripts in tests/ directory
 tests/debug_*.py
 tests/manual_login.py
+tests/browser_antibot_test.py
+tests/test_browser_use_*.py
+tests/test_real_account.py
+tests/boss_cookies.json
 
 # Superpowers temporary plans (keep specs)
 docs/superpowers/plans/
