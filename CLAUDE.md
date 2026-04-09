@@ -41,7 +41,10 @@ python run.py --port 8080        # 指定端口
 python run.py --no-browser       # 不自动打开浏览器
 
 # 开发模式（热重载，但浏览器自动化功能不可用）
-python run.py --reload           # 热重载开发模式
+python run.py --reload           # 热重载开发模式（禁用浏览器）
+
+# 守护进程模式
+python run.py daemon -i 60       # 每60秒执行一轮搜索投递
 
 # CLI搜索
 python run.py search -k "Python后端" -p boss liepin -c 北京
@@ -65,6 +68,22 @@ python tests/debug_api_interception.py  # API拦截调试
 ```
 
 ## 核心架构
+
+### 单例模式
+
+项目中广泛使用单例模式，通过工厂函数获取：
+
+```python
+from backend.automation.browser import get_browser_manager
+from backend.services.orchestrator import get_orchestrator
+from backend.core.security.cookie_manager import get_cookie_manager
+
+browser = get_browser_manager()
+orchestrator = await get_orchestrator(use_ai=True)
+cookies = get_cookie_manager()
+```
+
+**重要：** `--reload` 模式下浏览器自动化功能不可用（事件循环策略不兼容）。
 
 ### 双模式策略
 
@@ -90,6 +109,14 @@ python tests/debug_api_interception.py  # API拦截调试
 2. 继承 `BasePlatformAdapter`，实现所有 `@abstractmethod`
 3. 在 `backend/adapters/__init__.py` 注册到 `get_adapter()`
 
+### 数据库模型
+
+主要模型定义在 `backend/core/database/models.py`：
+- `Job` / `Application` / `Message` - 职位、投递记录、消息
+- `UserProfile` / `FilterRule` / `SearchStrategy` - 用户画像、过滤规则、搜索策略
+- `SystemConfig` / `Resume` / `ResumeProfile` - 系统配置、简历
+- `ApplicationLog` - 投递日志
+
 ### 浏览器管理 (Playwright)
 
 `backend/automation/browser/playwright_manager.py` 使用单例模式：
@@ -112,8 +139,23 @@ page = await browser.get_page()
 | `/api/settings/items` | 配置项 (GET) |
 | `/api/user/profile` | 用户画像 (GET/PUT) |
 | `/api/search/execute` | 执行搜索 (POST) |
+| `/api/dashboard/summary` | 仪表盘摘要 (GET) |
 
 **注意:** 登录API是 `/system/login` 不是 `/auth/login`。
+
+### 平台实现状态
+
+| 平台 | 状态 | 风险 |
+|------|------|------|
+| BOSS直聘 | 生产可用 | 高（反爬严格，建议小号测试） |
+| 猎聘 | 生产可用 | 中 |
+
+### 环境变量
+
+关键配置通过 `.env` 文件管理：
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL` - OpenAI 配置
+- `DATABASE_URL` - 数据库连接（默认 SQLite）
+- `OLLAMA_BASE_URL` - Ollama 本地模型地址
 
 ## Windows 兼容性
 
